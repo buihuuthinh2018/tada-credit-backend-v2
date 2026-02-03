@@ -1,0 +1,317 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+////////////////////
+/// ENUMS
+////////////////////
+
+enum user_status {
+  ACTIVE
+  PENDING_VERIFY
+  SUSPENDED
+}
+
+enum gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum contract_document_status {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum wallet_transaction_type {
+  CREDIT
+  DEBIT
+}
+
+enum withdrawal_method {
+  BANKING
+  CRYPTO
+}
+
+enum withdrawal_status {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+}
+
+////////////////////
+/// USER & AUTH
+////////////////////
+
+model user {
+  id             String      @id @default(uuid())
+  email          String      @unique
+  phone          String      @unique
+  password       String
+  fullname       String
+  gender         gender
+  birth_date     DateTime
+  referral_code  String      @unique
+  referred_by    String?
+  status         user_status @default(PENDING_VERIFY)
+  created_at     DateTime    @default(now())
+
+  referrer       user?       @relation("user_referral", fields: [referred_by], references: [id])
+  referrals      user[]      @relation("user_referral")
+
+  roles          user_role[]
+  wallet         wallet?
+  contracts      contract[]
+  audit_logs     audit_log[]
+}
+
+model role {
+  id          String @id @default(uuid())
+  code        String @unique
+  name        String
+  description String?
+  is_system   Boolean @default(false)
+  created_at DateTime @default(now())
+
+  users        user_role[]
+  permissions  role_permission[]
+}
+
+model permission {
+  id          String @id @default(uuid())
+  code        String @unique
+  name        String
+  description String?
+  created_at  DateTime @default(now())
+
+  roles role_permission[]
+}
+
+model user_role {
+  id          String   @id @default(uuid())
+  user_id     String
+  role_id     String
+  assigned_at DateTime @default(now())
+
+  user user @relation(fields: [user_id], references: [id])
+  role role @relation(fields: [role_id], references: [id])
+}
+
+model role_permission {
+  id             String @id @default(uuid())
+  role_id        String
+  permission_id  String
+
+  role        role       @relation(fields: [role_id], references: [id])
+  permission permission @relation(fields: [permission_id], references: [id])
+}
+
+////////////////////
+/// SERVICE & WORKFLOW
+////////////////////
+
+model service {
+  id          String @id @default(uuid())
+  name        String
+  description String?
+  workflow_id String
+  is_active   Boolean @default(true)
+  created_at DateTime @default(now())
+
+  workflow workflow @relation(fields: [workflow_id], references: [id])
+
+  documents service_document_requirement[]
+  questions service_question[]
+  contracts contract[]
+}
+
+model workflow {
+  id         String @id @default(uuid())
+  name       String
+  version    Int
+  is_active  Boolean @default(true)
+  created_at DateTime @default(now())
+
+  stages       workflow_stage[]
+  transitions  workflow_transition[]
+}
+
+model workflow_stage {
+  id           String @id @default(uuid())
+  workflow_id  String
+  code         String
+  name         String
+  stage_order  Int
+
+  workflow workflow @relation(fields: [workflow_id], references: [id])
+}
+
+model workflow_transition {
+  id                String @id @default(uuid())
+  workflow_id       String
+  from_stage_id     String
+  to_stage_id       String
+  required_permission String?
+
+  workflow   workflow       @relation(fields: [workflow_id], references: [id])
+  from_stage workflow_stage @relation("from_stage", fields: [from_stage_id], references: [id])
+  to_stage   workflow_stage @relation("to_stage", fields: [to_stage_id], references: [id])
+}
+
+////////////////////
+/// DOCUMENT SYSTEM
+////////////////////
+
+model document_requirement {
+  id        String @id @default(uuid())
+  code      String
+  name      String
+  version   Int
+  config    Json
+  is_active Boolean @default(true)
+}
+
+model service_document_requirement {
+  id                       String @id @default(uuid())
+  service_id               String
+  document_requirement_id  String
+  is_required              Boolean @default(true)
+
+  service              service              @relation(fields: [service_id], references: [id])
+  document_requirement document_requirement @relation(fields: [document_requirement_id], references: [id])
+}
+
+////////////////////
+/// CONTRACT
+////////////////////
+
+model contract {
+  id                String @id @default(uuid())
+  user_id           String
+  service_id        String
+  current_stage_id  String
+  created_at        DateTime @default(now())
+
+  user        user        @relation(fields: [user_id], references: [id])
+  service     service     @relation(fields: [service_id], references: [id])
+  stage       workflow_stage @relation(fields: [current_stage_id], references: [id])
+
+  documents   contract_document[]
+  answers     contract_answer[]
+  histories   contract_stage_history[]
+}
+
+model contract_document {
+  id                       String @id @default(uuid())
+  contract_id              String
+  document_requirement_id  String
+  status                   contract_document_status @default(PENDING)
+  review_note              String?
+  created_at               DateTime @default(now())
+
+  contract contract @relation(fields: [contract_id], references: [id])
+  document_requirement document_requirement @relation(fields: [document_requirement_id], references: [id])
+
+  files contract_document_file[]
+}
+
+model contract_document_file {
+  id                    String @id @default(uuid())
+  contract_document_id  String
+  file_url              String
+  uploaded_at           DateTime @default(now())
+
+  document contract_document @relation(fields: [contract_document_id], references: [id])
+}
+
+////////////////////
+/// QUESTIONS
+////////////////////
+
+model question {
+  id      String @id @default(uuid())
+  content String
+  type    String
+}
+
+model service_question {
+  id          String @id @default(uuid())
+  service_id  String
+  question_id String
+
+  service  service  @relation(fields: [service_id], references: [id])
+  question question @relation(fields: [question_id], references: [id])
+}
+
+model contract_answer {
+  id          String @id @default(uuid())
+  contract_id String
+  question_id String
+  answer      String
+
+  contract contract @relation(fields: [contract_id], references: [id])
+  question question @relation(fields: [question_id], references: [id])
+}
+
+////////////////////
+/// COMMISSION & WALLET
+////////////////////
+
+model wallet {
+  id        String @id @default(uuid())
+  user_id   String @unique
+  balance   Decimal @default(0)
+  updated_at DateTime @updatedAt
+
+  user         user @relation(fields: [user_id], references: [id])
+  transactions wallet_transaction[]
+}
+
+model wallet_transaction {
+  id            String @id @default(uuid())
+  wallet_id     String
+  type          wallet_transaction_type
+  amount        Decimal
+  reference_id  String?
+  metadata      Json?
+  created_at    DateTime @default(now())
+
+  wallet wallet @relation(fields: [wallet_id], references: [id])
+}
+
+model withdrawal_request {
+  id             String @id @default(uuid())
+  user_id        String
+  amount         Decimal
+  method         withdrawal_method
+  status         withdrawal_status @default(PENDING)
+  admin_note     String?
+  proof_file_url String?
+  created_at     DateTime @default(now())
+  paid_at        DateTime?
+
+  user user @relation(fields: [user_id], references: [id])
+}
+
+////////////////////
+/// AUDIT LOG
+////////////////////
+
+model audit_log {
+  id          String @id @default(uuid())
+  user_id     String
+  action      String
+  target_type String
+  target_id   String?
+  metadata    Json?
+  created_at  DateTime @default(now())
+
+  user user @relation(fields: [user_id], references: [id])
+}
