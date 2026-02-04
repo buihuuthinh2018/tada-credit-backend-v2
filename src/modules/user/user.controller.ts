@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Put, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { UpdateUserDto } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -7,6 +8,8 @@ import { Permissions, CurrentUser } from '../../common/decorators';
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../../common/interfaces';
 
+@ApiTags('Users')
+@ApiBearerAuth('JWT-auth')
 @Controller('users')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class UserController {
@@ -16,11 +19,18 @@ export class UserController {
   ) {}
 
   @Get('me')
+  @ApiOperation({ summary: 'Get current user profile' })
+  @ApiResponse({ status: 200, description: 'Returns current user profile' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   getProfile(@CurrentUser() user: AuthenticatedUser) {
     return this.userService.findById(user.id);
   }
 
   @Put('me')
+  @ApiOperation({ summary: 'Update current user profile' })
+  @ApiResponse({ status: 200, description: 'Profile updated successfully' })
+  @ApiResponse({ status: 400, description: 'Bad request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async updateProfile(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: UpdateUserDto,
@@ -40,15 +50,24 @@ export class UserController {
   }
 
   @Get('me/referrals')
+  @ApiOperation({ summary: 'Get current user referrals' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiResponse({ status: 200, description: 'Returns list of referrals' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   getMyReferrals(
     @CurrentUser() user: AuthenticatedUser,
-    @Query('page') page = 1,
-    @Query('limit') limit = 20,
+    @Query('page') page: string | number = 1,
+    @Query('limit') limit: string | number = 20,
   ) {
-    return this.userService.getReferrals(user.id, page, limit);
+    const pageNum = typeof page === 'string' ? parseInt(page, 10) : page;
+    const limitNum = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+    return this.userService.getReferrals(user.id, pageNum, limitNum);
   }
 }
 
+@ApiTags('Users')
+@ApiBearerAuth('JWT-auth')
 @Controller('admin/users')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
 export class AdminUserController {
@@ -59,21 +78,44 @@ export class AdminUserController {
 
   @Get()
   @Permissions('user:read')
+  @ApiOperation({ summary: 'Get all users (Admin only)' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'search', required: false, type: String, description: 'Search by user ID, name, email, or phone' })
+  @ApiResponse({ status: 200, description: 'Returns paginated list of users' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:read permission' })
   findAll(
-    @Query('page') page = 1,
-    @Query('limit') limit = 20,
+    @Query('page') page: string | number = 1,
+    @Query('limit') limit: string | number = 20,
+    @Query('search') search?: string,
   ) {
-    return this.userService.findAll(page, limit);
+    const pageNum = typeof page === 'string' ? parseInt(page, 10) : page;
+    const limitNum = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+    return this.userService.findAll(pageNum, limitNum, search);
   }
 
   @Get(':id')
   @Permissions('user:read')
+  @ApiOperation({ summary: 'Get user by ID (Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'Returns user details' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:read permission' })
+  @ApiResponse({ status: 404, description: 'User not found' })
   findOne(@Param('id') id: string) {
     return this.userService.findById(id);
   }
 
   @Put(':id')
   @Permissions('user:update')
+  @ApiOperation({ summary: 'Update user (Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'User updated successfully' })
+  @ApiResponse({ status: 400, description: 'Bad request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:update permission' })
+  @ApiResponse({ status: 404, description: 'User not found' })
   async update(
     @CurrentUser() admin: AuthenticatedUser,
     @Param('id') id: string,
@@ -94,6 +136,13 @@ export class AdminUserController {
 
   @Post(':id/roles/:roleId')
   @Permissions('user:manage-roles')
+  @ApiOperation({ summary: 'Assign role to user (Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiParam({ name: 'roleId', description: 'Role ID to assign' })
+  @ApiResponse({ status: 200, description: 'Role assigned successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:manage-roles permission' })
+  @ApiResponse({ status: 404, description: 'User or role not found' })
   async assignRole(
     @CurrentUser() admin: AuthenticatedUser,
     @Param('id') userId: string,
@@ -114,6 +163,13 @@ export class AdminUserController {
 
   @Patch(':id/roles/:roleId/remove')
   @Permissions('user:manage-roles')
+  @ApiOperation({ summary: 'Remove role from user (Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiParam({ name: 'roleId', description: 'Role ID to remove' })
+  @ApiResponse({ status: 200, description: 'Role removed successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:manage-roles permission' })
+  @ApiResponse({ status: 404, description: 'User or role not found' })
   async removeRole(
     @CurrentUser() admin: AuthenticatedUser,
     @Param('id') userId: string,
@@ -134,6 +190,12 @@ export class AdminUserController {
 
   @Patch(':id/verify')
   @Permissions('user:verify')
+  @ApiOperation({ summary: 'Verify user (Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'User verified successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:verify permission' })
+  @ApiResponse({ status: 404, description: 'User not found' })
   async verifyUser(
     @CurrentUser() admin: AuthenticatedUser,
     @Param('id') userId: string,
@@ -152,6 +214,12 @@ export class AdminUserController {
 
   @Patch(':id/suspend')
   @Permissions('user:suspend')
+  @ApiOperation({ summary: 'Suspend user (Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'User suspended successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:suspend permission' })
+  @ApiResponse({ status: 404, description: 'User not found' })
   async suspendUser(
     @CurrentUser() admin: AuthenticatedUser,
     @Param('id') userId: string,
@@ -170,6 +238,12 @@ export class AdminUserController {
 
   @Patch(':id/activate')
   @Permissions('user:activate')
+  @ApiOperation({ summary: 'Activate user (Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiResponse({ status: 200, description: 'User activated successfully' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:activate permission' })
+  @ApiResponse({ status: 404, description: 'User not found' })
   async activateUser(
     @CurrentUser() admin: AuthenticatedUser,
     @Param('id') userId: string,
@@ -188,11 +262,21 @@ export class AdminUserController {
 
   @Get(':id/referrals')
   @Permissions('user:read')
+  @ApiOperation({ summary: 'Get user referrals (Admin only)' })
+  @ApiParam({ name: 'id', description: 'User ID' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiResponse({ status: 200, description: 'Returns list of user referrals' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires user:read permission' })
+  @ApiResponse({ status: 404, description: 'User not found' })
   getReferrals(
     @Param('id') userId: string,
-    @Query('page') page = 1,
-    @Query('limit') limit = 20,
+    @Query('page') page: string | number = 1,
+    @Query('limit') limit: string | number = 20,
   ) {
-    return this.userService.getReferrals(userId, page, limit);
+    const pageNum = typeof page === 'string' ? parseInt(page, 10) : page;
+    const limitNum = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+    return this.userService.getReferrals(userId, pageNum, limitNum);
   }
 }

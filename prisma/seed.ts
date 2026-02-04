@@ -9,83 +9,92 @@ async function main() {
   // Create permissions
   const permissions = [
     // User permissions
-    { code: 'user:read', name: 'Read Users' },
-    { code: 'user:update', name: 'Update Users' },
-    { code: 'user:delete', name: 'Delete Users' },
-    { code: 'user:manage-roles', name: 'Manage User Roles' },
-    { code: 'user:verify', name: 'Verify Users' },
-    { code: 'user:suspend', name: 'Suspend Users' },
-    { code: 'user:activate', name: 'Activate Users' },
+    { code: 'user:read', name: 'Read Users', description: 'Xem danh sách và thông tin chi tiết người dùng' },
+    { code: 'user:update', name: 'Update Users', description: 'Cập nhật thông tin người dùng' },
+    { code: 'user:delete', name: 'Delete Users', description: 'Xóa tài khoản người dùng' },
+    { code: 'user:manage-roles', name: 'Manage User Roles', description: 'Gán và thu hồi vai trò cho người dùng' },
+    { code: 'user:verify', name: 'Verify Users', description: 'Xác minh danh tính người dùng' },
+    { code: 'user:suspend', name: 'Suspend Users', description: 'Tạm khóa tài khoản người dùng' },
+    { code: 'user:activate', name: 'Activate Users', description: 'Kích hoạt lại tài khoản người dùng bị khóa' },
     
     // Role permissions
-    { code: 'role:create', name: 'Create Roles' },
-    { code: 'role:read', name: 'Read Roles' },
-    { code: 'role:update', name: 'Update Roles' },
-    { code: 'role:delete', name: 'Delete Roles' },
-    { code: 'role:manage-permissions', name: 'Manage Role Permissions' },
+    { code: 'role:create', name: 'Create Roles', description: 'Tạo vai trò mới trong hệ thống' },
+    { code: 'role:read', name: 'Read Roles', description: 'Xem danh sách và chi tiết các vai trò' },
+    { code: 'role:update', name: 'Update Roles', description: 'Cập nhật thông tin vai trò' },
+    { code: 'role:delete', name: 'Delete Roles', description: 'Xóa vai trò (không áp dụng cho vai trò hệ thống)' },
+    { code: 'role:manage-permissions', name: 'Manage Role Permissions', description: 'Gán và thu hồi quyền hạn cho vai trò' },
     
     // Permission permissions
-    { code: 'permission:create', name: 'Create Permissions' },
-    { code: 'permission:read', name: 'Read Permissions' },
-    { code: 'permission:update', name: 'Update Permissions' },
-    { code: 'permission:delete', name: 'Delete Permissions' },
+    { code: 'permission:create', name: 'Create Permissions', description: 'Tạo quyền hạn mới' },
+    { code: 'permission:read', name: 'Read Permissions', description: 'Xem danh sách quyền hạn' },
+    { code: 'permission:update', name: 'Update Permissions', description: 'Cập nhật thông tin quyền hạn' },
+    { code: 'permission:delete', name: 'Delete Permissions', description: 'Xóa quyền hạn' },
     
     // Service permissions
-    { code: 'service:create', name: 'Create Services' },
-    { code: 'service:read', name: 'Read Services' },
-    { code: 'service:update', name: 'Update Services' },
-    { code: 'service:delete', name: 'Delete Services' },
+    { code: 'service:create', name: 'Create Services', description: 'Tạo dịch vụ vay mới' },
+    { code: 'service:read', name: 'Read Services', description: 'Xem danh sách và chi tiết dịch vụ' },
+    { code: 'service:update', name: 'Update Services', description: 'Cập nhật thông tin dịch vụ' },
+    { code: 'service:delete', name: 'Delete Services', description: 'Xóa dịch vụ (soft delete)' },
     
     // Workflow permissions
-    { code: 'workflow:create', name: 'Create Workflows' },
-    { code: 'workflow:read', name: 'Read Workflows' },
-    { code: 'workflow:update', name: 'Update Workflows' },
+    { code: 'workflow:create', name: 'Create Workflows', description: 'Tạo quy trình xử lý hồ sơ mới' },
+    { code: 'workflow:read', name: 'Read Workflows', description: 'Xem danh sách và chi tiết quy trình' },
+    { code: 'workflow:update', name: 'Update Workflows', description: 'Cập nhật quy trình và các giai đoạn' },
     
     // Contract permissions
-    { code: 'contract:read', name: 'Read Contracts' },
-    { code: 'contract:transition', name: 'Transition Contracts' },
+    { code: 'contract:read', name: 'Read Contracts', description: 'Xem danh sách và chi tiết hồ sơ vay' },
+    { code: 'contract:transition', name: 'Transition Contracts', description: 'Chuyển trạng thái hồ sơ vay theo workflow' },
     
     // Document permissions
-    { code: 'document:create', name: 'Create Document Requirements' },
-    { code: 'document:read', name: 'Read Documents' },
-    { code: 'document:update', name: 'Update Documents' },
-    { code: 'document:delete', name: 'Delete Documents' },
-    { code: 'document:review', name: 'Review Documents' },
+    { code: 'document:create', name: 'Create Document Requirements', description: 'Tạo loại tài liệu yêu cầu mới' },
+    { code: 'document:read', name: 'Read Documents', description: 'Xem tài liệu của hồ sơ' },
+    { code: 'document:update', name: 'Update Documents', description: 'Cập nhật cấu hình loại tài liệu' },
+    { code: 'document:delete', name: 'Delete Documents', description: 'Xóa loại tài liệu' },
+    { code: 'document:review', name: 'Review Documents', description: 'Duyệt/từ chối tài liệu của khách hàng' },
     
     // Question permissions
-    { code: 'question:create', name: 'Create Questions' },
-    { code: 'question:read', name: 'Read Questions' },
-    { code: 'question:update', name: 'Update Questions' },
-    { code: 'question:delete', name: 'Delete Questions' },
+    { code: 'question:create', name: 'Create Questions', description: 'Tạo câu hỏi bổ sung cho dịch vụ' },
+    { code: 'question:read', name: 'Read Questions', description: 'Xem danh sách câu hỏi' },
+    { code: 'question:update', name: 'Update Questions', description: 'Cập nhật nội dung câu hỏi' },
+    { code: 'question:delete', name: 'Delete Questions', description: 'Xóa câu hỏi' },
     
     // Commission permissions
-    { code: 'commission:create', name: 'Create Commission Config' },
-    { code: 'commission:read', name: 'Read Commission Config' },
-    { code: 'commission:update', name: 'Update Commission Config' },
+    { code: 'commission:create', name: 'Create Commission Config', description: 'Tạo cấu hình hoa hồng/KPI mới' },
+    { code: 'commission:read', name: 'Read Commission Config', description: 'Xem cấu hình hoa hồng và KPI' },
+    { code: 'commission:update', name: 'Update Commission Config', description: 'Cập nhật tỷ lệ hoa hồng/KPI' },
     
     // Wallet permissions
-    { code: 'wallet:read', name: 'Read Wallets' },
-    { code: 'wallet:verify', name: 'Verify Wallet Integrity' },
+    { code: 'wallet:read', name: 'Read Wallets', description: 'Xem số dư và lịch sử giao dịch ví' },
+    { code: 'wallet:verify', name: 'Verify Wallet Integrity', description: 'Kiểm tra và đối soát số dư ví' },
     
     // Withdrawal permissions
-    { code: 'withdrawal:read', name: 'Read Withdrawals' },
-    { code: 'withdrawal:process', name: 'Process Withdrawals' },
+    { code: 'withdrawal:read', name: 'Read Withdrawals', description: 'Xem danh sách yêu cầu rút tiền' },
+    { code: 'withdrawal:process', name: 'Process Withdrawals', description: 'Duyệt/từ chối yêu cầu rút tiền' },
     
     // Audit permissions
-    { code: 'audit:read', name: 'Read Audit Logs' },
+    { code: 'audit:read', name: 'Read Audit Logs', description: 'Xem lịch sử hoạt động hệ thống' },
 
     // Workflow transition permissions (dynamic)
-    { code: 'workflow:transition:review', name: 'Transition to Review Stage' },
-    { code: 'workflow:transition:approve', name: 'Transition to Approved Stage' },
-    { code: 'workflow:transition:reject', name: 'Transition to Rejected Stage' },
-    { code: 'workflow:transition:complete', name: 'Transition to Complete Stage' },
+    { code: 'workflow:transition:review', name: 'Transition to Review Stage', description: 'Chuyển hồ sơ sang giai đoạn xem xét' },
+    { code: 'workflow:transition:approve', name: 'Transition to Approved Stage', description: 'Phê duyệt hồ sơ vay' },
+    { code: 'workflow:transition:reject', name: 'Transition to Rejected Stage', description: 'Từ chối hồ sơ vay' },
+    { code: 'workflow:transition:complete', name: 'Transition to Complete Stage', description: 'Hoàn tất hồ sơ vay' },
+    
+    // Settings permissions
+    { code: 'settings:read', name: 'Read Settings', description: 'Xem cấu hình hệ thống' },
+    { code: 'settings:update', name: 'Update Settings', description: 'Cập nhật cấu hình hệ thống' },
+    
+    // Dashboard/Stats permissions
+    { code: 'dashboard:read', name: 'Read Dashboard', description: 'Xem tổng quan và thống kê hệ thống' },
+    { code: 'report:read', name: 'Read Reports', description: 'Xem báo cáo chi tiết' },
+    { code: 'report:export', name: 'Export Reports', description: 'Xuất báo cáo ra file' },
   ];
 
   console.log('Creating permissions...');
   for (const perm of permissions) {
     await prisma.permission.upsert({
       where: { code: perm.code },
-      update: {},
+      update: { description: perm.description },
       create: perm,
     });
   }

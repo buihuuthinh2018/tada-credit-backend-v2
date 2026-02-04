@@ -71,6 +71,9 @@ model user {
   contracts           contract[]
   audit_logs          audit_log[]
   withdrawal_requests withdrawal_request[]
+  commission_snapshots commission_snapshot[]
+  commissions_earned   commission_record[] @relation("commission_earner")
+  commissions_referred commission_record[] @relation("commission_referred")
 }
 
 model role {
@@ -138,11 +141,12 @@ model service {
 }
 
 model workflow {
-  id         String @id @default(uuid())
-  name       String
-  version    Int
-  is_active  Boolean @default(true)
-  created_at DateTime @default(now())
+  id          String @id @default(uuid())
+  name        String
+  description String?
+  version     Int
+  is_active   Boolean @default(true)
+  created_at  DateTime @default(now())
 
   stages       workflow_stage[]
   transitions  workflow_transition[]
@@ -150,11 +154,14 @@ model workflow {
 }
 
 model workflow_stage {
-  id           String @id @default(uuid())
-  workflow_id  String
-  code         String
-  name         String
-  stage_order  Int
+  id                  String @id @default(uuid())
+  workflow_id         String
+  code                String
+  name                String
+  stage_order         Int
+  color               String @default("#6B7280") // Default gray color
+  is_required         Boolean @default(false) // DRAFT, SUBMITTED, COMPLETED are required
+  triggers_commission Boolean @default(false) // When contract reaches this stage, trigger commission
 
   workflow workflow @relation(fields: [workflow_id], references: [id])
   
@@ -210,6 +217,7 @@ model service_document_requirement {
 
 model contract {
   id                String @id @default(uuid())
+  contract_number   String @unique  // Auto-generated readable contract number (e.g., HD-2026-000001)
   user_id           String
   service_id        String
   current_stage_id  String
@@ -244,7 +252,7 @@ model contract_document {
 model contract_document_file {
   id                    String @id @default(uuid())
   contract_document_id  String
-  file_url              String
+  file_url              String @db.Text
   file_name             String?
   file_size             Int?
   mime_type             String?
@@ -310,13 +318,74 @@ model contract_answer {
 /// COMMISSION & WALLET
 ////////////////////
 
+// Base commission rate per role
 model commission_config {
   id          String @id @default(uuid())
   role_code   String
-  rate        Decimal @db.Decimal(5, 4)
+  rate        Decimal @db.Decimal(5, 4) // e.g., 0.05 = 5%
   is_active   Boolean @default(true)
   created_at  DateTime @default(now())
   updated_at  DateTime @updatedAt
+}
+
+// KPI tiers for bonus commission
+model kpi_commission_tier {
+  id                String @id @default(uuid())
+  name              String // "Bronze", "Silver", "Gold", etc.
+  role_code         String // CTV, USER
+  min_contracts     Int?   // Minimum contracts in period
+  min_disbursement  Decimal? @db.Decimal(15, 2) // Minimum total disbursement
+  bonus_rate        Decimal @db.Decimal(5, 4) // Additional bonus rate
+  tier_order        Int    // For ordering tiers (higher = better)
+  is_active         Boolean @default(true)
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  snapshots commission_snapshot[]
+}
+
+// Monthly commission snapshot for KPI evaluation
+model commission_snapshot {
+  id                String @id @default(uuid())
+  user_id           String
+  period_month      Int    // 1-12
+  period_year       Int    // 2024, 2025, etc.
+  total_contracts   Int    // Total completed contracts
+  total_disbursement Decimal @db.Decimal(15, 2) // Total disbursement amount
+  base_commission   Decimal @db.Decimal(15, 2) // Sum of base commissions
+  kpi_tier_id       String? // Which KPI tier was achieved
+  bonus_commission  Decimal @db.Decimal(15, 2) @default(0) // Bonus from KPI
+  total_commission  Decimal @db.Decimal(15, 2) // base + bonus
+  status            String @default("PENDING") // PENDING, PROCESSED, PAID
+  processed_at      DateTime?
+  created_at        DateTime @default(now())
+
+  user user @relation(fields: [user_id], references: [id])
+  kpi_tier kpi_commission_tier? @relation(fields: [kpi_tier_id], references: [id])
+
+  @@unique([user_id, period_month, period_year])
+  @@index([period_year, period_month])
+}
+
+// Individual commission record (when contract reaches commission stage)
+model commission_record {
+  id              String @id @default(uuid())
+  user_id         String // The referrer who earns commission
+  contract_id     String
+  referred_user_id String // The user who created the contract
+  amount          Decimal @db.Decimal(15, 2)
+  rate            Decimal @db.Decimal(5, 4)
+  disbursement_amount Decimal? @db.Decimal(15, 2) // Contract disbursement amount
+  status          String @default("PENDING") // PENDING, CREDITED, CANCELLED
+  snapshot_id     String? // Link to monthly snapshot
+  credited_at     DateTime?
+  created_at      DateTime @default(now())
+
+  user user @relation("commission_earner", fields: [user_id], references: [id])
+  referred_user user @relation("commission_referred", fields: [referred_user_id], references: [id])
+
+  @@index([user_id, status])
+  @@index([created_at])
 }
 
 model wallet {

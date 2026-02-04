@@ -159,11 +159,22 @@ export class UserService {
     });
   }
 
-  async findAll(page = 1, limit = 20) {
+  async findAll(page = 1, limit = 20, search?: string) {
     const skip = (page - 1) * limit;
+
+    // Build where clause for search
+    const where = search ? {
+      OR: [
+        { id: { contains: search } },
+        { fullname: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+      ],
+    } : {};
 
     const [data, total] = await Promise.all([
       this.prisma.user.findMany({
+        where,
         skip,
         take: limit,
         orderBy: { created_at: 'desc' },
@@ -189,7 +200,7 @@ export class UserService {
           },
         },
       }),
-      this.prisma.user.count(),
+      this.prisma.user.count({ where }),
     ]);
 
     return {

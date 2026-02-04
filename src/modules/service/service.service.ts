@@ -6,6 +6,21 @@ import { CreateServiceDto, UpdateServiceDto } from './dto';
 export class ServiceService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private formatService(service: any) {
+    return {
+      ...service,
+      documentRequirements: (service.documents || []).map((d: any) => ({
+        ...d.document_requirement,
+        isRequired: d.is_required,
+      })),
+      questions: (service.questions || []).map((q: any) => ({
+        ...q.question,
+        isRequired: q.is_required,
+        sortOrder: q.sort_order,
+      })),
+    };
+  }
+
   async create(dto: CreateServiceDto) {
     // Verify workflow exists
     const workflow = await this.prisma.workflow.findUnique({
@@ -31,20 +46,28 @@ export class ServiceService {
       });
 
       // Add document requirements
-      if (dto.documentRequirementIds?.length) {
+      const documentRequirementInputs =
+        dto.documentRequirements?.length
+          ? dto.documentRequirements
+          : dto.documentRequirementIds?.length
+            ? dto.documentRequirementIds.map((id) => ({ id, isRequired: true }))
+            : [];
+
+      if (documentRequirementInputs.length) {
+        const documentRequirementIds = documentRequirementInputs.map((d) => d.id);
         const docReqs = await tx.document_requirement.findMany({
-          where: { id: { in: dto.documentRequirementIds } },
+          where: { id: { in: documentRequirementIds } },
         });
 
-        if (docReqs.length !== dto.documentRequirementIds.length) {
+        if (docReqs.length !== documentRequirementIds.length) {
           throw new BadRequestException('Some document requirements not found');
         }
 
         await tx.service_document_requirement.createMany({
-          data: dto.documentRequirementIds.map((docId) => ({
+          data: documentRequirementInputs.map((d) => ({
             service_id: service.id,
-            document_requirement_id: docId,
-            is_required: true,
+            document_requirement_id: d.id,
+            is_required: d.isRequired ?? true,
           })),
         });
       }
@@ -68,7 +91,37 @@ export class ServiceService {
         });
       }
 
-      return this.findById(service.id);
+      // Important: query using the transaction client to ensure the just-created
+      // record is visible before the transaction is committed.
+      const fullService = await tx.service.findUnique({
+        where: { id: service.id },
+        include: {
+          workflow: {
+            include: {
+              stages: {
+                orderBy: { stage_order: 'asc' },
+              },
+            },
+          },
+          documents: {
+            include: {
+              document_requirement: true,
+            },
+          },
+          questions: {
+            include: {
+              question: true,
+            },
+            orderBy: { sort_order: 'asc' },
+          },
+        },
+      });
+
+      if (!fullService) {
+        throw new NotFoundException('Service not found');
+      }
+
+      return this.formatService(fullService);
     });
   }
 
@@ -140,18 +193,7 @@ export class ServiceService {
       throw new NotFoundException('Service not found');
     }
 
-    return {
-      ...service,
-      documentRequirements: service.documents.map((d) => ({
-        ...d.document_requirement,
-        isRequired: d.is_required,
-      })),
-      questions: service.questions.map((q) => ({
-        ...q.question,
-        isRequired: q.is_required,
-        sortOrder: q.sort_order,
-      })),
-    };
+    return this.formatService(service);
   }
 
   async update(id: string, dto: UpdateServiceDto) {
@@ -165,7 +207,7 @@ export class ServiceService {
       data: {
         name: dto.name,
         description: dto.description,
-        is_active: dto.isActive,
+        is_active: dto.is_active,
       },
     });
   }
