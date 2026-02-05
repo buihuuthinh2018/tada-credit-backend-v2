@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Param, Body, Query, UseGuards, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { UpdateUserDto } from './dto';
@@ -63,6 +63,31 @@ export class UserController {
     const pageNum = typeof page === 'string' ? parseInt(page, 10) : page;
     const limitNum = typeof limit === 'string' ? parseInt(limit, 10) : limit;
     return this.userService.getReferrals(user.id, pageNum, limitNum);
+  }
+
+  @Get('search')
+  @ApiOperation({ summary: 'Search users by email or phone (CTV only)' })
+  @ApiQuery({ name: 'q', required: true, type: String, description: 'Search query (email, phone, or name)' })
+  @ApiResponse({ status: 200, description: 'Returns matching users' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden - requires CTV role' })
+  async searchUsers(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('q') query: string,
+  ) {
+    // Check if user has CTV role (roles is string[] of role codes)
+    const isCTV = user.roles?.includes('CTV');
+    const hasAdminPermission = user.permissions?.includes('user:read');
+    
+    if (!isCTV && !hasAdminPermission) {
+      throw new ForbiddenException('You must be a CTV to search users');
+    }
+
+    if (!query || query.length < 3) {
+      return { data: [], meta: { total: 0, page: 1, limit: 10, totalPages: 0 } };
+    }
+
+    return this.userService.searchUsers(query);
   }
 }
 

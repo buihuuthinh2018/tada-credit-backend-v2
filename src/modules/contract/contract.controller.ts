@@ -2,12 +2,11 @@ import { Controller, Get, Post, Put, Patch, Param, Body, Query, UseGuards, UseIn
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam, ApiQuery, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { FilesInterceptor, AnyFilesInterceptor } from '@nestjs/platform-express';
 import { ContractService } from './contract.service';
-import { CreateContractDto, TransitionContractDto, AnswerDto, SubmitContractDto } from './dto';
+import { CreateContractDto, TransitionContractDto, AnswerDto, SubmitContractDto, UpdateDisbursementDto } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../rbac/guards/permissions.guard';
 import { Permissions, CurrentUser } from '../../common/decorators';
 import { AuthenticatedUser } from '../../common/interfaces';
-
 @ApiTags('Contracts')
 @ApiBearerAuth('JWT-auth')
 @Controller('contracts')
@@ -30,15 +29,21 @@ export class ContractController {
   @ApiOperation({ summary: 'Get current user contracts' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'type', required: false, enum: ['owned', 'created'], description: 'owned = contracts where user is owner, created = contracts CTV created for others' })
+  @ApiQuery({ name: 'serviceId', required: false, type: String })
+  @ApiQuery({ name: 'stageCode', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Returns paginated list of user contracts' })
   findMyContracts(
     @CurrentUser() user: AuthenticatedUser,
     @Query('page') page: string | number = 1,
     @Query('limit') limit: string | number = 20,
+    @Query('type') type?: 'owned' | 'created',
+    @Query('serviceId') serviceId?: string,
+    @Query('stageCode') stageCode?: string,
   ) {
     const pageNum = typeof page === 'string' ? parseInt(page, 10) : page;
     const limitNum = typeof limit === 'string' ? parseInt(limit, 10) : limit;
-    return this.contractService.findByUser(user.id, pageNum, limitNum);
+    return this.contractService.findByUser(user.id, pageNum, limitNum, { type, serviceId, stageCode });
   }
 
   @Get(':id')
@@ -240,6 +245,21 @@ export class AdminContractController {
     @Body() dto: TransitionContractDto,
   ) {
     return this.contractService.transitionStage(id, dto, admin.id);
+  }
+
+  @Patch(':id/disbursement')
+  @Permissions('contract:update')
+  @ApiOperation({ summary: 'Update disbursed amount for a contract (Admin)' })
+  @ApiParam({ name: 'id', description: 'Contract ID' })
+  @ApiResponse({ status: 200, description: 'Disbursement amount updated successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid amount or contract state' })
+  @ApiResponse({ status: 404, description: 'Contract not found' })
+  updateDisbursement(
+    @CurrentUser() admin: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: UpdateDisbursementDto,
+  ) {
+    return this.contractService.updateDisbursedAmount(id, dto.disbursedAmount, admin.id);
   }
 
   @Get(':id/transitions')

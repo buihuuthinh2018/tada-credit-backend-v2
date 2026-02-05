@@ -68,7 +68,8 @@ model user {
 
   roles               user_role[]
   wallet              wallet?
-  contracts           contract[]
+  contracts           contract[] @relation("user_contracts")
+  created_contracts   contract[] @relation("created_contracts")  // Contracts CTV created for others
   audit_logs          audit_log[]
   withdrawal_requests withdrawal_request[]
   commission_snapshots commission_snapshot[]
@@ -126,12 +127,15 @@ model role_permission {
 ////////////////////
 
 model service {
-  id          String @id @default(uuid())
-  name        String
-  description String?
-  workflow_id String
-  is_active   Boolean @default(true)
-  created_at DateTime @default(now())
+  id                 String @id @default(uuid())
+  name               String
+  description        String?
+  workflow_id        String
+  is_active          Boolean @default(true)
+  commission_enabled Boolean @default(true) // Enable/disable commission calculation for this service
+  min_loan_amount    Decimal @db.Decimal(15, 2) @default(1000000)   // Minimum loan amount in VND
+  max_loan_amount    Decimal @db.Decimal(15, 2) @default(100000000) // Maximum loan amount in VND
+  created_at         DateTime @default(now())
 
   workflow workflow @relation(fields: [workflow_id], references: [id])
 
@@ -216,15 +220,21 @@ model service_document_requirement {
 ////////////////////
 
 model contract {
-  id                String @id @default(uuid())
-  contract_number   String @unique  // Auto-generated readable contract number (e.g., HD-2026-000001)
-  user_id           String
-  service_id        String
-  current_stage_id  String
-  created_at        DateTime @default(now())
-  updated_at        DateTime @updatedAt
+  id                 String @id @default(uuid())
+  contract_number    String @unique  // Auto-generated readable contract number (e.g., HD-2026-000001)
+  user_id            String
+  service_id         String
+  current_stage_id   String
+  creator_id         String?    // CTV who created contract on behalf of user (null if user created it themselves)
+  requested_amount   Decimal @db.Decimal(15, 2) @default(0)  // User's requested loan amount
+  disbursed_amount   Decimal? @db.Decimal(15, 2)             // Actual disbursed amount (set by admin)
+  revenue_percentage Decimal? @db.Decimal(5, 2)              // Revenue percentage for commission calculation (e.g., 10.50 = 10.5%)
+  total_revenue      Decimal? @db.Decimal(15, 2)             // Calculated: disbursed_amount * revenue_percentage / 100
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
-  user        user           @relation(fields: [user_id], references: [id])
+  user        user           @relation("user_contracts", fields: [user_id], references: [id])
+  creator     user?          @relation("created_contracts", fields: [creator_id], references: [id])
   service     service        @relation(fields: [service_id], references: [id])
   stage       workflow_stage @relation(fields: [current_stage_id], references: [id])
 
@@ -335,7 +345,7 @@ model kpi_commission_tier {
   role_code         String // CTV, USER
   min_contracts     Int?   // Minimum contracts in period
   min_disbursement  Decimal? @db.Decimal(15, 2) // Minimum total disbursement
-  bonus_rate        Decimal @db.Decimal(5, 4) // Additional bonus rate
+  bonus_amount      Decimal @db.Decimal(15, 2) @default(0) // Fixed bonus amount (VND)
   tier_order        Int    // For ordering tiers (higher = better)
   is_active         Boolean @default(true)
   created_at        DateTime @default(now())
@@ -376,6 +386,8 @@ model commission_record {
   amount          Decimal @db.Decimal(15, 2)
   rate            Decimal @db.Decimal(5, 4)
   disbursement_amount Decimal? @db.Decimal(15, 2) // Contract disbursement amount
+  revenue_percentage  Decimal? @db.Decimal(5, 2)  // Revenue percentage snapshot
+  total_revenue       Decimal? @db.Decimal(15, 2) // Calculated revenue: disbursement * percentage
   status          String @default("PENDING") // PENDING, CREDITED, CANCELLED
   snapshot_id     String? // Link to monthly snapshot
   credited_at     DateTime?

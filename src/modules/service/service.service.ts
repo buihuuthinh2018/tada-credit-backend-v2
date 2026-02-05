@@ -42,6 +42,9 @@ export class ServiceService {
           name: dto.name,
           description: dto.description,
           workflow_id: dto.workflowId,
+          commission_enabled: dto.commissionEnabled ?? true,
+          min_loan_amount: dto.minLoanAmount ?? 1000000,
+          max_loan_amount: dto.maxLoanAmount ?? 100000000,
         },
       });
 
@@ -208,6 +211,9 @@ export class ServiceService {
         name: dto.name,
         description: dto.description,
         is_active: dto.is_active,
+        commission_enabled: dto.commission_enabled,
+        min_loan_amount: dto.min_loan_amount,
+        max_loan_amount: dto.max_loan_amount,
       },
     });
   }
@@ -307,6 +313,16 @@ export class ServiceService {
           select: {
             id: true,
             name: true,
+            stages: {
+              orderBy: { stage_order: 'asc' },
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                color: true,
+                stage_order: true,
+              },
+            },
           },
         },
         _count: {

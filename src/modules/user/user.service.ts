@@ -121,6 +121,15 @@ export class UserService {
                 id: true,
                 code: true,
                 name: true,
+                permissions: {
+                  select: {
+                    permission: {
+                      select: {
+                        code: true,
+                      },
+                    },
+                  },
+                },
               },
             },
           },
@@ -132,9 +141,18 @@ export class UserService {
       throw new NotFoundException('User not found');
     }
 
+    // Collect all unique permissions from roles
+    const allPermissions = new Set<string>();
+    user.roles.forEach((r) => {
+      r.role.permissions.forEach((p) => {
+        allPermissions.add(p.permission.code);
+      });
+    });
+
     return {
       ...user,
       roles: user.roles.map((r) => r.role),
+      permissions: Array.from(allPermissions),
     };
   }
 
@@ -215,6 +233,38 @@ export class UserService {
         totalPages: Math.ceil(total / limit),
         hasNextPage: page * limit < total,
         hasPreviousPage: page > 1,
+      },
+    };
+  }
+
+  // Search users for CTV (limited fields for privacy)
+  async searchUsers(query: string, limit = 10) {
+    const data = await this.prisma.user.findMany({
+      where: {
+        OR: [
+          { email: { contains: query } },
+          { phone: { contains: query } },
+          { fullname: { contains: query } },
+        ],
+      },
+      take: limit,
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        fullname: true,
+        status: true,
+      },
+    });
+
+    return {
+      data,
+      meta: {
+        total: data.length,
+        page: 1,
+        limit,
+        totalPages: 1,
       },
     };
   }

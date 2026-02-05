@@ -17,6 +17,22 @@ export class ContractService {
   ) {}
 
   async create(userId: string, dto: CreateContractDto) {
+    // Determine the actual contract owner
+    // If targetUserId is provided (CTV creating for another user), use that
+    // Otherwise, the current user is creating for themselves
+    const contractOwnerId = dto.targetUserId || userId;
+    const creatorId = dto.targetUserId ? userId : null;  // null if creating for self
+
+    // Validate target user exists if creating for someone else
+    if (dto.targetUserId) {
+      const targetUser = await this.prisma.user.findUnique({
+        where: { id: dto.targetUserId },
+      });
+      if (!targetUser) {
+        throw new NotFoundException('Target user not found');
+      }
+    }
+
     // Get the service and its workflow
     const service = await this.prisma.service.findUnique({
       where: { id: dto.serviceId },
@@ -42,6 +58,15 @@ export class ContractService {
 
     if (!service.is_active) {
       throw new BadRequestException('Service is not active');
+    }
+
+    // Validate requested amount is within service limits
+    const minLoan = Number(service.min_loan_amount);
+    const maxLoan = Number(service.max_loan_amount);
+    if (dto.requestedAmount < minLoan || dto.requestedAmount > maxLoan) {
+      throw new BadRequestException(
+        `Số tiền yêu cầu phải nằm trong khoảng ${minLoan.toLocaleString('vi-VN')} - ${maxLoan.toLocaleString('vi-VN')} VND`
+      );
     }
 
     // Get the initial stage (first stage in order)
@@ -73,9 +98,11 @@ export class ContractService {
       const contract = await tx.contract.create({
         data: {
           contract_number: contractNumber,
-          user_id: userId,
+          user_id: contractOwnerId,
+          creator_id: creatorId,  // CTV who created on behalf (null if self-created)
           service_id: dto.serviceId,
           current_stage_id: initialStage.id,
+          requested_amount: dto.requestedAmount,
         },
       });
 
@@ -110,7 +137,10 @@ export class ContractService {
           contract_id: contract.id,
           to_stage_id: initialStage.id,
           changed_by: userId,
-          metadata: { action: 'contract_created' },
+          metadata: { 
+            action: 'contract_created',
+            createdFor: dto.targetUserId ? contractOwnerId : undefined,
+          },
         },
       });
 
@@ -120,7 +150,10 @@ export class ContractService {
         action: 'CONTRACT_CREATED',
         targetType: 'contract',
         targetId: contract.id,
-        metadata: { serviceId: dto.serviceId },
+        metadata: { 
+          serviceId: dto.serviceId,
+          targetUserId: dto.targetUserId,  // Track if created for another user
+        },
       });
 
       // Fetch complete contract data within transaction
@@ -133,6 +166,13 @@ export class ContractService {
               email: true,
               fullname: true,
               phone: true,
+            },
+          },
+          creator: {
+            select: {
+              id: true,
+              email: true,
+              fullname: true,
             },
           },
           service: {
@@ -254,6 +294,8 @@ export class ContractService {
         name: contract.service.name,
         description: contract.service.description,
         isActive: contract.service.is_active,
+        min_loan_amount: contract.service.min_loan_amount,
+        max_loan_amount: contract.service.max_loan_amount,
         createdAt: contract.service.created_at,
         questions: contract.service.questions?.map(sq => ({
           ...sq.question,
@@ -268,23 +310,61 @@ export class ContractService {
     };
   }
 
-  async findByUser(userId: string, page = 1, limit = 20) {
+  async findByUser(userId: string, page = 1, limit = 20, filters?: {
+    type?: 'owned' | 'created';  // owned = user's own contracts, created = CTV created for others
+    serviceId?: string;
+    stageCode?: string;
+  }) {
     const skip = (page - 1) * limit;
+
+    // Build where clause based on type filter
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {};
+
+    if (filters?.type === 'owned') {
+      // User's own contracts (user is owner AND either no creator or user created for self)
+      where.user_id = userId;
+      where.OR = [
+        { creator_id: null },  // Self-created
+        { creator_id: userId },  // Created by self for self (edge case)
+      ];
+    } else if (filters?.type === 'created') {
+      // Contracts CTV created for OTHER users
+      where.creator_id = userId;
+      where.NOT = { user_id: userId };  // Exclude self-created
+    } else {
+      // Default: All contracts where user is owner OR creator
+      where.OR = [
+        { user_id: userId },
+        { creator_id: userId },
+      ];
+    }
+
+    if (filters?.serviceId) {
+      where.service_id = filters.serviceId;
+    }
+
+    if (filters?.stageCode) {
+      where.stage = { code: filters.stageCode };
+    }
 
     const [data, total] = await Promise.all([
       this.prisma.contract.findMany({
-        where: { user_id: userId },
+        where,
         skip,
         take: limit,
         orderBy: { created_at: 'desc' },
         include: {
+          user: {
+            select: { id: true, email: true, fullname: true, phone: true },
+          },
           service: {
             select: { id: true, name: true },
           },
           stage: true,
         },
       }),
-      this.prisma.contract.count({ where: { user_id: userId } }),
+      this.prisma.contract.count({ where }),
     ]);
 
     return {
@@ -364,7 +444,11 @@ export class ContractService {
       throw new NotFoundException('Contract not found');
     }
 
-    if (contract.user_id !== userId) {
+    // Allow update from contract owner OR the creator (CTV who created on behalf)
+    const isOwner = contract.user_id === userId;
+    const isCreator = contract.creator_id === userId;
+    
+    if (!isOwner && !isCreator) {
       throw new ForbiddenException('Not authorized to update this contract');
     }
 
@@ -423,11 +507,47 @@ export class ContractService {
       throw new BadRequestException('Target stage not found');
     }
 
+    // If transitioning to commission-triggering stage, disbursedAmount is required
+    if (toStage.triggers_commission && contract.service.commission_enabled) {
+      if (dto.disbursementAmount === undefined || dto.disbursementAmount === null) {
+        throw new BadRequestException('Số tiền giải ngân là bắt buộc khi chuyển sang stage hoàn thành');
+      }
+      if (dto.disbursementAmount <= 0) {
+        throw new BadRequestException('Số tiền giải ngân phải lớn hơn 0');
+      }
+      if (dto.revenuePercentage === undefined || dto.revenuePercentage === null) {
+        throw new BadRequestException('Tỷ lệ doanh thu là bắt buộc khi chuyển sang stage hoàn thành');
+      }
+      if (dto.revenuePercentage <= 0 || dto.revenuePercentage > 100) {
+        throw new BadRequestException('Tỷ lệ doanh thu phải từ 0.01% đến 100%');
+      }
+    }
+
+    // Calculate total revenue
+    const totalRevenue = dto.disbursementAmount && dto.revenuePercentage 
+      ? dto.disbursementAmount * dto.revenuePercentage / 100 
+      : undefined;
+
     return this.prisma.$transaction(async (tx) => {
-      // Update contract stage
+      // Update contract stage (and disbursed_amount, revenue_percentage, total_revenue if transitioning to commission stage)
+      const updateData: { 
+        current_stage_id: string; 
+        disbursed_amount?: number;
+        revenue_percentage?: number;
+        total_revenue?: number;
+      } = {
+        current_stage_id: dto.toStageId,
+      };
+      
+      if (toStage.triggers_commission && dto.disbursementAmount) {
+        updateData.disbursed_amount = dto.disbursementAmount;
+        updateData.revenue_percentage = dto.revenuePercentage;
+        updateData.total_revenue = totalRevenue;
+      }
+
       const updatedContract = await tx.contract.update({
         where: { id: contractId },
-        data: { current_stage_id: dto.toStageId },
+        data: updateData,
         include: {
           service: true,
           stage: true,
@@ -441,13 +561,19 @@ export class ContractService {
           from_stage_id: contract.current_stage_id,
           to_stage_id: dto.toStageId,
           changed_by: actorId,
-          metadata: { note: dto.note },
+          metadata: { 
+            note: dto.note,
+            disbursementAmount: dto.disbursementAmount,
+            revenuePercentage: dto.revenuePercentage,
+            totalRevenue: totalRevenue,
+          },
         },
       });
 
       // Check if this stage triggers commission (dynamic based on workflow config)
-      if (toStage.triggers_commission) {
-        await this.handleContractCompletion(contract.id, contract.user_id, dto.disbursementAmount);
+      // Also check if commission is enabled for this service
+      if (toStage.triggers_commission && contract.service.commission_enabled) {
+        await this.handleContractCompletion(contract.id, contract.user_id, dto.disbursementAmount!, dto.revenuePercentage!, totalRevenue!);
       }
 
       // Audit log
@@ -462,12 +588,67 @@ export class ContractService {
           toStageId: dto.toStageId,
           toStageCode: toStage.code,
           note: dto.note,
+          disbursementAmount: dto.disbursementAmount,
+          revenuePercentage: dto.revenuePercentage,
+          totalRevenue: totalRevenue,
           triggersCommission: toStage.triggers_commission,
         },
       });
 
       return this.findById(contractId);
     });
+  }
+
+  /**
+   * Update disbursed amount for a contract
+   * Admin/Reviewer can set this during review stages before completion
+   */
+  async updateDisbursedAmount(contractId: string, disbursedAmount: number, actorId: string) {
+    const contract = await this.prisma.contract.findUnique({
+      where: { id: contractId },
+      include: {
+        stage: true,
+        service: true,
+      },
+    });
+
+    if (!contract) {
+      throw new NotFoundException('Contract not found');
+    }
+
+    // Can only update if not in DRAFT stage
+    if (contract.stage.code === 'DRAFT') {
+      throw new BadRequestException('Không thể cập nhật giải ngân khi hồ sơ chưa được submit');
+    }
+
+    // Cannot update if contract is already at a commission-triggered stage
+    if (contract.stage.triggers_commission) {
+      throw new BadRequestException('Không thể cập nhật giải ngân sau khi đã hoàn thành');
+    }
+
+    if (disbursedAmount <= 0) {
+      throw new BadRequestException('Số tiền giải ngân phải lớn hơn 0');
+    }
+
+    const updatedContract = await this.prisma.contract.update({
+      where: { id: contractId },
+      data: { disbursed_amount: disbursedAmount },
+    });
+
+    // Audit log
+    await this.auditService.log({
+      userId: actorId,
+      action: 'CONTRACT_DISBURSEMENT_UPDATED',
+      targetType: 'contract',
+      targetId: contractId,
+      metadata: {
+        previousAmount: contract.disbursed_amount?.toString() ?? null,
+        newAmount: disbursedAmount.toString(),
+        requestedAmount: contract.requested_amount?.toString() ?? null,
+      },
+    });
+
+    return this.findById(contractId);
   }
 
   async getAvailableTransitions(contractId: string) {
@@ -558,7 +739,11 @@ export class ContractService {
       throw new NotFoundException('Contract not found');
     }
 
-    if (contract.user_id !== userId) {
+    // Allow upload from contract owner OR the creator (CTV who created on behalf)
+    const isOwner = contract.user_id === userId;
+    const isCreator = contract.creator_id === userId;
+    
+    if (!isOwner && !isCreator) {
       throw new ForbiddenException('Not authorized to upload to this contract');
     }
 
@@ -676,7 +861,11 @@ export class ContractService {
       throw new NotFoundException('Contract not found');
     }
 
-    if (contract.user_id !== userId) {
+    // Allow submission from contract owner OR the creator (CTV who created on behalf)
+    const isOwner = contract.user_id === userId;
+    const isCreator = contract.creator_id === userId;
+    
+    if (!isOwner && !isCreator) {
       throw new ForbiddenException('Not authorized to submit this contract');
     }
 
@@ -754,9 +943,28 @@ export class ContractService {
         const folder = this.storageService.generateContractDocumentPath(contractId, docReqId);
         const config = contractDoc.document_requirement.config as { allowedTypes?: string[]; maxSizeBytes?: number } | null;
         
+        // Convert file extensions to MIME types if needed
+        let allowedMimeTypes = config?.allowedTypes;
+        if (allowedMimeTypes && allowedMimeTypes.some(type => type.startsWith('.'))) {
+          // Config contains extensions (.pdf, .jpg, etc), need to convert to MIME types
+          const extensionToMimeType: Record<string, string> = {
+            '.pdf': 'application/pdf',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.png': 'image/png',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.doc': 'application/msword',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.xls': 'application/vnd.ms-excel',
+            '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          };
+          allowedMimeTypes = allowedMimeTypes.map(ext => extensionToMimeType[ext.toLowerCase()] || ext);
+        }
+        
         const uploadedFiles = await this.storageService.uploadFiles(files, {
           folder,
-          allowedMimeTypes: config?.allowedTypes,
+          allowedMimeTypes,
           maxSizeBytes: config?.maxSizeBytes,
         });
 
@@ -811,10 +1019,22 @@ export class ContractService {
     });
   }
 
-  private async handleContractCompletion(contractId: string, userId: string, disbursementAmount?: number) {
-    // Trigger commission for referrer
+  private async handleContractCompletion(
+    contractId: string, 
+    userId: string, 
+    disbursementAmount: number,
+    revenuePercentage: number,
+    totalRevenue: number
+  ) {
+    // Trigger commission for referrer (commission is based on totalRevenue, not disbursementAmount)
     try {
-      await this.commissionService.processContractCompletion(contractId, userId, disbursementAmount);
+      await this.commissionService.processContractCompletion(
+        contractId, 
+        userId, 
+        disbursementAmount,
+        revenuePercentage,
+        totalRevenue
+      );
     } catch (error) {
       // Log but don't fail the transaction
       console.error('Failed to process commission:', error);

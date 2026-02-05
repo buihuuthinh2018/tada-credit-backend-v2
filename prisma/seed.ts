@@ -84,6 +84,11 @@ async function main() {
     { code: 'settings:read', name: 'Read Settings', description: 'Xem cấu hình hệ thống' },
     { code: 'settings:update', name: 'Update Settings', description: 'Cập nhật cấu hình hệ thống' },
     
+    // System Config permissions
+    { code: 'system:read', name: 'Read System Config', description: 'Xem cấu hình hệ thống (commission, snapshot...)' },
+    { code: 'system:update', name: 'Update System Config', description: 'Cập nhật cấu hình hệ thống' },
+    { code: 'system:delete', name: 'Delete System Config', description: 'Xóa cấu hình hệ thống' },
+    
     // Dashboard/Stats permissions
     { code: 'dashboard:read', name: 'Read Dashboard', description: 'Xem tổng quan và thống kê hệ thống' },
     { code: 'report:read', name: 'Read Reports', description: 'Xem báo cáo chi tiết' },

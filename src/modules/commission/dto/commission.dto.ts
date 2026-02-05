@@ -59,11 +59,10 @@ export class CreateKpiTierDto {
   @Type(() => Number)
   minDisbursement?: number;
 
-  @ApiProperty({ description: 'Bonus rate (0-1)', example: 0.01, minimum: 0, maximum: 1 })
+  @ApiProperty({ description: 'Bonus amount in VND', example: 1000000, minimum: 0 })
   @IsNumber()
   @Min(0)
-  @Max(1)
-  bonusRate: number;
+  bonusAmount: number;
 
   @ApiProperty({ description: 'Tier order (higher = better tier)', example: 1 })
   @IsInt()
@@ -92,12 +91,11 @@ export class UpdateKpiTierDto {
   @Type(() => Number)
   minDisbursement?: number;
 
-  @ApiPropertyOptional({ description: 'Bonus rate (0-1)', example: 0.01 })
+  @ApiPropertyOptional({ description: 'Bonus amount in VND', example: 1000000 })
   @IsOptional()
   @IsNumber()
   @Min(0)
-  @Max(1)
-  bonusRate?: number;
+  bonusAmount?: number;
 
   @ApiPropertyOptional({ description: 'Tier order (higher = better tier)', example: 1 })
   @IsOptional()

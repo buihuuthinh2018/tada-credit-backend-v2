@@ -103,36 +103,37 @@ export class ContractDocumentController {
     private readonly auditService: AuditService,
   ) {}
 
-  @Patch(':id/review')
-  @Permissions('document:review')
-  @ApiOperation({ summary: 'Review a contract document' })
-  @ApiParam({ name: 'id', description: 'Contract document ID' })
-  @ApiBody({ schema: { properties: { status: { enum: ['APPROVED', 'REJECTED'] }, reviewNote: { type: 'string' } } } })
-  @ApiResponse({ status: 200, description: 'Document reviewed successfully' })
-  @ApiResponse({ status: 400, description: 'Document has already been reviewed' })
-  @ApiResponse({ status: 404, description: 'Document not found' })
-  async reviewDocument(
-    @CurrentUser() admin: AuthenticatedUser,
-    @Param('id') documentId: string,
-    @Body() body: { status: contract_document_status; reviewNote?: string },
-  ) {
-    const result = await this.documentService.reviewDocument(
-      documentId,
-      body.status,
-      body.reviewNote,
-      admin.id,
-    );
-    
-    await this.auditService.log({
-      userId: admin.id,
-      action: 'DOCUMENT_REVIEWED',
-      targetType: 'contract_document',
-      targetId: documentId,
-      metadata: { status: body.status, reviewNote: body.reviewNote },
-    });
-
-    return result;
-  }
+  // Document review functionality disabled - admin reviews manually without approval workflow
+  // @Patch(':id/review')
+  // @Permissions('document:review')
+  // @ApiOperation({ summary: 'Review a contract document' })
+  // @ApiParam({ name: 'id', description: 'Contract document ID' })
+  // @ApiBody({ schema: { properties: { status: { enum: ['APPROVED', 'REJECTED'] }, reviewNote: { type: 'string' } } } })
+  // @ApiResponse({ status: 200, description: 'Document reviewed successfully' })
+  // @ApiResponse({ status: 400, description: 'Document has already been reviewed' })
+  // @ApiResponse({ status: 404, description: 'Document not found' })
+  // async reviewDocument(
+  //   @CurrentUser() admin: AuthenticatedUser,
+  //   @Param('id') documentId: string,
+  //   @Body() body: { status: contract_document_status; reviewNote?: string },
+  // ) {
+  //   const result = await this.documentService.reviewDocument(
+  //     documentId,
+  //     body.status,
+  //     body.reviewNote,
+  //     admin.id,
+  //   );
+  //   
+  //   await this.auditService.log({
+  //     userId: admin.id,
+  //     action: 'DOCUMENT_REVIEWED',
+  //     targetType: 'contract_document',
+  //     targetId: documentId,
+  //     metadata: { status: body.status, reviewNote: body.reviewNote },
+  //   });
+  //
+  //   return result;
+  // }
 
   @Get('contract/:contractId')
   @Permissions('contract:read')

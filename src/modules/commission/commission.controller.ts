@@ -161,6 +161,65 @@ export class AdminCommissionController {
 }
 
 // ==========================================
+// Admin Revenue Statistics Controller
+// ==========================================
+
+@ApiTags('Admin - Revenue Statistics')
+@ApiBearerAuth('JWT-auth')
+@Controller('admin/revenue')
+@UseGuards(JwtAuthGuard, PermissionsGuard)
+export class AdminRevenueController {
+  constructor(private readonly commissionService: CommissionService) {}
+
+  @Get('statistics')
+  @Permissions('commission:read')
+  @ApiOperation({ summary: 'Get revenue statistics by period' })
+  @ApiQuery({ name: 'period', required: true, enum: ['daily', 'weekly', 'monthly', 'yearly'] })
+  @ApiQuery({ name: 'startDate', required: false, type: String, example: '2026-01-01' })
+  @ApiQuery({ name: 'endDate', required: false, type: String, example: '2026-12-31' })
+  @ApiQuery({ name: 'userId', required: false, type: String, description: 'Filter by CTV/creator ID' })
+  @ApiResponse({ status: 200, description: 'Returns revenue statistics grouped by period' })
+  async getRevenueStatistics(
+    @Query('period') period: 'daily' | 'weekly' | 'monthly' | 'yearly',
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('userId') userId?: string,
+  ) {
+    return this.commissionService.getRevenueStatistics({
+      period,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
+      userId,
+    });
+  }
+
+  @Get('by-user')
+  @Permissions('commission:read')
+  @ApiOperation({ summary: 'Get revenue statistics grouped by CTV/creator' })
+  @ApiQuery({ name: 'startDate', required: false, type: String, example: '2026-01-01' })
+  @ApiQuery({ name: 'endDate', required: false, type: String, example: '2026-12-31' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiResponse({ status: 200, description: 'Returns revenue statistics grouped by user' })
+  async getRevenueByUser(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('page') page: string | number = 1,
+    @Query('limit') limit: string | number = 20,
+  ) {
+    const pageNum = typeof page === 'string' ? parseInt(page, 10) : page;
+    const limitNum = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+    
+    return this.commissionService.getRevenueByUser({
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
+      page: pageNum,
+      limit: limitNum,
+    });
+  }
+}
+
+// ==========================================
 // Admin KPI Tier Controller
 // ==========================================
 

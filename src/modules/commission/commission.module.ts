@@ -4,7 +4,8 @@ import {
   CommissionController, 
   AdminCommissionController, 
   AdminKpiTierController,
-  AdminSnapshotController 
+  AdminSnapshotController,
+  AdminRevenueController 
 } from './commission.controller';
 import { WalletModule } from '../wallet/wallet.module';
 
@@ -16,6 +17,7 @@ import { WalletModule } from '../wallet/wallet.module';
     AdminCommissionController,
     AdminKpiTierController,
     AdminSnapshotController,
+    AdminRevenueController,
   ],
   exports: [CommissionService],
 })
