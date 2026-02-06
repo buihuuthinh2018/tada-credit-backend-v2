@@ -75,6 +75,7 @@ model user {
   commission_snapshots commission_snapshot[]
   commissions_earned   commission_record[] @relation("commission_earner")
   commissions_referred commission_record[] @relation("commission_referred")
+  history_changes      contract_stage_history[] @relation("history_changed_by")
 }
 
 model role {
@@ -172,6 +173,8 @@ model workflow_stage {
   contracts          contract[]
   from_transitions   workflow_transition[] @relation("from_stage")
   to_transitions     workflow_transition[] @relation("to_stage")
+  history_from       contract_stage_history[] @relation("history_from_stage")
+  history_to         contract_stage_history[] @relation("history_to_stage")
 }
 
 model workflow_transition {
@@ -281,7 +284,10 @@ model contract_stage_history {
   metadata      Json?
   created_at    DateTime @default(now())
 
-  contract contract @relation(fields: [contract_id], references: [id])
+  contract   contract        @relation(fields: [contract_id], references: [id])
+  from_stage workflow_stage?  @relation("history_from_stage", fields: [from_stage_id], references: [id])
+  to_stage   workflow_stage   @relation("history_to_stage", fields: [to_stage_id], references: [id])
+  changed_by_user user        @relation("history_changed_by", fields: [changed_by], references: [id])
 }
 
 ////////////////////

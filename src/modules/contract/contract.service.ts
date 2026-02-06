@@ -278,6 +278,11 @@ export class ContractService {
         },
         histories: {
           orderBy: { created_at: 'desc' },
+          include: {
+            from_stage: { select: { id: true, code: true, name: true, color: true, stage_order: true } },
+            to_stage: { select: { id: true, code: true, name: true, color: true, stage_order: true } },
+            changed_by_user: { select: { id: true, fullname: true, email: true } },
+          },
         },
       },
     });
@@ -679,6 +684,11 @@ export class ContractService {
     return this.prisma.contract_stage_history.findMany({
       where: { contract_id: contractId },
       orderBy: { created_at: 'desc' },
+      include: {
+        from_stage: { select: { id: true, code: true, name: true, color: true, stage_order: true } },
+        to_stage: { select: { id: true, code: true, name: true, color: true, stage_order: true } },
+        changed_by_user: { select: { id: true, fullname: true, email: true } },
+      },
     });
   }
 
