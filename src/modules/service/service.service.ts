@@ -7,17 +7,27 @@ export class ServiceService {
   constructor(private readonly prisma: PrismaService) {}
 
   private formatService(service: any) {
+    const { documents, questions: rawQuestions, ...rest } = service;
     return {
-      ...service,
-      documentRequirements: (service.documents || []).map((d: any) => ({
+      ...rest,
+      documents,
+      documentRequirements: (documents || []).map((d: any) => ({
         ...d.document_requirement,
         isRequired: d.is_required,
       })),
-      questions: (service.questions || []).map((q: any) => ({
-        ...q.question,
-        isRequired: q.is_required,
-        sortOrder: q.sort_order,
-      })),
+      questions: (rawQuestions || []).map((q: any) => {
+        const question = q.question || {};
+        return {
+          id: question.id,
+          content: question.content,
+          type: question.type,
+          config: question.config,
+          is_active: question.is_active,
+          created_at: question.created_at,
+          isRequired: q.is_required,
+          sortOrder: q.sort_order,
+        };
+      }),
     };
   }
 
@@ -306,7 +316,7 @@ export class ServiceService {
   }
 
   async getActiveServices() {
-    return this.prisma.service.findMany({
+    const services = await this.prisma.service.findMany({
       where: { is_active: true },
       include: {
         workflow: {
@@ -325,10 +335,24 @@ export class ServiceService {
             },
           },
         },
+        documents: {
+          include: {
+            document_requirement: true,
+          },
+        },
+        questions: {
+          include: {
+            question: true,
+          },
+          orderBy: { sort_order: 'asc' },
+        },
         _count: {
           select: { documents: true, questions: true },
         },
       },
     });
+
+    // Format services to match frontend expectations
+    return services.map(service => this.formatService(service));
   }
 }
