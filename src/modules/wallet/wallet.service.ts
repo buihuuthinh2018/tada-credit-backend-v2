@@ -172,7 +172,7 @@ export class WalletService {
   async getTransactions(walletId: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
 
-    const [data, total] = await Promise.all([
+    const [transactions, total, wallet] = await Promise.all([
       this.prisma.wallet_transaction.findMany({
         where: { wallet_id: walletId },
         skip,
@@ -180,7 +180,53 @@ export class WalletService {
         orderBy: { created_at: 'desc' },
       }),
       this.prisma.wallet_transaction.count({ where: { wallet_id: walletId } }),
+      this.prisma.wallet.findUnique({ where: { id: walletId } }),
     ]);
+
+    // Calculate balance_after for each transaction
+    // Get all transactions after the current page to compute running balance
+    const allTxAfterCount = await this.prisma.wallet_transaction.count({
+      where: {
+        wallet_id: walletId,
+        created_at: { gt: transactions.length > 0 ? transactions[0].created_at : new Date() },
+      },
+    });
+
+    // We'll compute balance_after by working backwards from current balance
+    // First, get all transactions that are newer than our page (to subtract from current balance)
+    const newerTransactions = await this.prisma.wallet_transaction.findMany({
+      where: {
+        wallet_id: walletId,
+        created_at: { gt: transactions.length > 0 ? transactions[0].created_at : new Date() },
+      },
+      select: { type: true, amount: true },
+    });
+
+    // Start from current balance, subtract newer transactions to get balance at first tx
+    let runningBalance = wallet?.balance || new Decimal(0);
+    for (const tx of newerTransactions) {
+      if (tx.type === 'CREDIT') {
+        runningBalance = runningBalance.minus(tx.amount);
+      } else {
+        runningBalance = runningBalance.plus(tx.amount);
+      }
+    }
+
+    // Now runningBalance is the balance AFTER the first transaction in our page
+    // Assign balance_after to each transaction (ordered desc, so first = newest)
+    const data = transactions.map((tx) => {
+      const balanceAfter = runningBalance;
+      // Move to previous state
+      if (tx.type === 'CREDIT') {
+        runningBalance = runningBalance.minus(tx.amount);
+      } else {
+        runningBalance = runningBalance.plus(tx.amount);
+      }
+      return {
+        ...tx,
+        balance_after: balanceAfter,
+      };
+    });
 
     return {
       data,

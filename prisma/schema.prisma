@@ -238,9 +238,10 @@ model contract {
   service     service        @relation(fields: [service_id], references: [id])
   stage       workflow_stage @relation(fields: [current_stage_id], references: [id])
 
-  documents   contract_document[]
-  answers     contract_answer[]
-  histories   contract_stage_history[]
+  documents          contract_document[]
+  answers            contract_answer[]
+  histories          contract_stage_history[]
+  commission_records commission_record[]
 }
 
 model contract_document {
@@ -395,6 +396,7 @@ model commission_record {
 
   user user @relation("commission_earner", fields: [user_id], references: [id])
   referred_user user @relation("commission_referred", fields: [referred_user_id], references: [id])
+  contract contract @relation(fields: [contract_id], references: [id])
 
   @@index([user_id, status])
   @@index([created_at])

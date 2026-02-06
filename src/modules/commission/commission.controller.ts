@@ -72,6 +72,13 @@ export class CommissionController {
     const limitNum = typeof limit === 'string' ? parseInt(limit, 10) : limit;
     return this.commissionService.getUserSnapshots(user.id, pageNum, limitNum);
   }
+
+  @Get('kpi-tiers')
+  @ApiOperation({ summary: 'Get active KPI tiers for display' })
+  @ApiResponse({ status: 200, description: 'Returns active KPI tiers' })
+  getKpiTiers() {
+    return this.commissionService.getActiveKpiTiers();
+  }
 }
 
 // ==========================================

@@ -778,7 +778,7 @@ export class ContractService {
       );
     }
 
-    // Upload files to R2 Storage
+    // Upload files to Telegram storage
     const folder = this.storageService.generateContractDocumentPath(contractId, documentRequirementId);
     const uploadedFiles = await this.storageService.uploadFiles(files, {
       folder,
@@ -939,7 +939,7 @@ export class ContractService {
           throw new NotFoundException(`Document requirement ${docReqId} not found for this contract`);
         }
 
-        // Upload files to R2 Storage
+        // Upload files to Telegram storage
         const folder = this.storageService.generateContractDocumentPath(contractId, docReqId);
         const config = contractDoc.document_requirement.config as { allowedTypes?: string[]; maxSizeBytes?: number } | null;
         

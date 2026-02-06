@@ -42,7 +42,7 @@ export class WithdrawalService {
         walletId: wallet.id,
         amount: requestAmount,
         referenceType: 'withdrawal_hold',
-        description: 'Withdrawal request - funds held',
+        description: 'Yêu cầu rút tiền - tạm giữ',
         metadata: { method: dto.method },
       });
 
@@ -198,7 +198,7 @@ export class WithdrawalService {
           amount: request.amount,
           referenceId: id,
           referenceType: 'withdrawal_refund',
-          description: 'Withdrawal rejected - funds returned',
+          description: 'Yêu cầu rút tiền bị từ chối - hoàn tiền',
         });
       }
 
@@ -257,7 +257,7 @@ export class WithdrawalService {
         amount: request.amount,
         referenceId: id,
         referenceType: 'withdrawal_cancelled',
-        description: 'Withdrawal cancelled - funds returned',
+        description: 'Hủy yêu cầu rút tiền - hoàn tiền',
       });
 
       // Delete the request or mark as cancelled

@@ -184,6 +184,25 @@ export class CommissionService {
     return this.prisma.kpi_commission_tier.delete({ where: { id } });
   }
 
+  /**
+   * Get all active KPI tiers (for user display)
+   */
+  async getActiveKpiTiers() {
+    return this.prisma.kpi_commission_tier.findMany({
+      where: { is_active: true },
+      orderBy: { tier_order: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        role_code: true,
+        min_contracts: true,
+        min_disbursement: true,
+        bonus_amount: true,
+        tier_order: true,
+      },
+    });
+  }
+
   // ==========================================
   // Commission Processing
   // ==========================================
@@ -301,7 +320,7 @@ export class CommissionService {
       amount: commissionAmount,
       referenceId: commissionRecord.id,
       referenceType: 'commission',
-      description: `Hoa hồng hợp đồng #${contractId.slice(0, 8)}`,
+      description: `Hoa hồng hợp đồng #${contract.contract_number}`,
       metadata: {
         referredUserId: userId,
         contractId,
@@ -372,6 +391,14 @@ export class CommissionService {
         include: {
           referred_user: {
             select: { id: true, fullname: true, email: true },
+          },
+          contract: {
+            select: {
+              id: true,
+              contract_number: true,
+              service: { select: { name: true } },
+              user: { select: { fullname: true } },
+            },
           },
         },
       }),
@@ -1022,6 +1049,15 @@ export class CommissionService {
       _sum: { amount: true },
     });
 
+    // Pending commission (PENDING status records not yet credited)
+    const pendingRecords = await this.prisma.commission_record.aggregate({
+      where: {
+        user_id: userId,
+        status: 'PENDING',
+      },
+      _sum: { amount: true },
+    });
+
     // Current month stats
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1047,6 +1083,23 @@ export class CommissionService {
       new Decimal(0)
     );
 
+    // Total contracts (all time)
+    const totalContracts = await this.prisma.commission_record.count({
+      where: { user_id: userId },
+    });
+
+    // Find current KPI tier based on monthly stats
+    const userRoles = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: { roles: { include: { role: true } } },
+    });
+    const roleCode = userRoles?.roles.find(r => r.role.code === 'CTV')?.role.code || 'USER';
+    const { tier: currentKpiTier } = await this.calculateKpiTier(
+      roleCode,
+      monthlyContracts,
+      monthlyDisbursement,
+    );
+
     // Referred users count
     const referredCount = await this.prisma.user.count({
       where: { referred_by: userId },
@@ -1054,11 +1107,12 @@ export class CommissionService {
 
     return {
       totalEarned: totalEarned._sum.amount || new Decimal(0),
-      currentMonth: {
-        contracts: monthlyContracts,
-        commission: monthlyCommission,
-        disbursement: monthlyDisbursement,
-      },
+      pendingAmount: pendingRecords._sum.amount || new Decimal(0),
+      totalContracts,
+      currentMonthContracts: monthlyContracts,
+      currentMonthEarned: monthlyCommission,
+      currentMonthDisbursement: monthlyDisbursement,
+      currentKpiTier: currentKpiTier ? { name: currentKpiTier.name } : null,
       referredUsers: referredCount,
       walletBalance: wallet.balance,
     };

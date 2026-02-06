@@ -1,34 +1,29 @@
 import { Injectable, BadRequestException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import {
-  S3Client,
-  PutObjectCommand,
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { v4 as uuidv4 } from "uuid";
+import axios from "axios";
+import * as FormData from "form-data";
 
 export interface UploadResult {
-  key: string;
-  url: string;
+  key: string; // Telegram file_id
+  url: string; // telegram:// reference stored in DB
   fileName: string;
   fileSize: number;
   mimeType: string;
+  messageId?: number; // Telegram message ID in channel
 }
 
 export interface UploadOptions {
-  folder?: string;
+  folder?: string; // Used as caption prefix for organization
+  caption?: string; // Custom caption for the file in Telegram
   allowedMimeTypes?: string[];
   maxSizeBytes?: number;
 }
 
 @Injectable()
 export class StorageService {
-  private readonly s3Client: S3Client;
-  private readonly bucketName: string;
-  private readonly publicUrl: string;
+  private readonly botToken: string;
+  private readonly channelId: string;
+  private readonly baseUrl: string;
   private readonly logger = new Logger(StorageService.name);
 
   // Default allowed MIME types for documents
@@ -44,44 +39,25 @@ export class StorageService {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ];
 
-  // Default max file size: 10MB
-  private readonly defaultMaxSizeBytes = 10 * 1024 * 1024;
+  // Default max file size: 20MB (Telegram Bot API limit for sendDocument)
+  private readonly defaultMaxSizeBytes = 20 * 1024 * 1024;
 
   constructor(private readonly configService: ConfigService) {
-    const endpoint = this.configService.get<string>("CLOUDFLARE_R2_ENDPOINT");
-    const accessKeyId = this.configService.get<string>(
-      "CLOUDFLARE_R2_ACCESS_KEY_ID",
-    );
-    const secretAccessKey = this.configService.get<string>(
-      "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
-    );
-    this.bucketName =
-      this.configService.get<string>("CLOUDFLARE_R2_BUCKET_NAME") || "";
-    
-    // Use R2_PUBLIC_URL if set, otherwise use endpoint
-    this.publicUrl =
-      this.configService.get<string>("R2_PUBLIC_URL") || 
-      this.configService.get<string>("CLOUDFLARE_R2_PUBLIC_URL") ||
-      endpoint || "";
+    this.botToken =
+      this.configService.get<string>("TELEGRAM_BOT_TOKEN") || "";
+    this.channelId =
+      this.configService.get<string>("TELEGRAM_CHANNEL_ID") || "";
+    this.baseUrl = `https://api.telegram.org/bot${this.botToken}`;
 
-    if (!endpoint || !accessKeyId) {
+    if (!this.botToken || !this.channelId) {
       this.logger.warn(
-        "R2 Storage credentials not configured. File uploads will fail.",
+        "Telegram Bot credentials not configured. File uploads will fail.",
       );
     }
-
-    this.s3Client = new S3Client({
-      region: "auto",
-      endpoint: endpoint,
-      credentials: {
-        accessKeyId: accessKeyId || "",
-        secretAccessKey: secretAccessKey || "",
-      },
-    });
   }
 
   /**
-   * Upload a single file to R2 Storage
+   * Upload a single file to Telegram channel
    */
   async uploadFile(
     file: Express.Multer.File,
@@ -89,6 +65,7 @@ export class StorageService {
   ): Promise<UploadResult> {
     const {
       folder = "uploads",
+      caption,
       allowedMimeTypes = this.defaultAllowedMimeTypes,
       maxSizeBytes = this.defaultMaxSizeBytes,
     } = options;
@@ -96,38 +73,75 @@ export class StorageService {
     // Validate file
     this.validateFile(file, allowedMimeTypes, maxSizeBytes);
 
-    // Generate unique filename
-    const fileExtension = this.getFileExtension(file.originalname);
-    const uniqueFileName = `${uuidv4()}${fileExtension}`;
-    const key = `${folder}/${uniqueFileName}`;
+    // Build caption: folder/originalname for organization
+    const fileCaption = caption || `${folder}/${file.originalname}`;
 
     try {
-      // Upload to R2
-      await this.s3Client.send(
-        new PutObjectCommand({
-          Bucket: this.bucketName,
-          Key: key,
-          Body: file.buffer,
-          ContentType: file.mimetype,
-          Metadata: {
-            originalName: encodeURIComponent(file.originalname),
-          },
-        }),
+      const formData = new FormData();
+      formData.append("chat_id", this.channelId);
+      formData.append("caption", fileCaption);
+
+      // Always use sendDocument to preserve original file quality & name
+      formData.append("document", file.buffer, {
+        filename: file.originalname,
+        contentType: file.mimetype,
+      });
+
+      const response = await axios.post(
+        `${this.baseUrl}/sendDocument`,
+        formData,
+        {
+          headers: formData.getHeaders(),
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+        },
       );
 
-      const url = this.getPublicUrl(key);
+      if (!response.data.ok) {
+        throw new Error(
+          `Telegram API error: ${response.data.description || "Unknown error"}`,
+        );
+      }
 
-      this.logger.log(`File uploaded successfully: ${key}`);
+      const message = response.data.result;
+      const messageId = message.message_id;
+
+      // Extract file_id from the response
+      let fileId: string;
+      if (message.document) {
+        fileId = message.document.file_id;
+      } else if (message.photo) {
+        // Get the largest photo size
+        fileId = message.photo[message.photo.length - 1].file_id;
+      } else {
+        throw new Error("No file_id in Telegram response");
+      }
+
+      // Store as telegram://file_id format for easy identification
+      const url = `telegram://${fileId}?message_id=${messageId}`;
+
+      this.logger.log(
+        `File uploaded to Telegram: ${file.originalname} -> message_id=${messageId}, file_id=${fileId}`,
+      );
 
       return {
-        key,
+        key: fileId,
         url,
         fileName: file.originalname,
         fileSize: file.size,
         mimeType: file.mimetype,
+        messageId,
       };
     } catch (error) {
-      this.logger.error(`Failed to upload file: ${error.message}`, error.stack);
+      this.logger.error(
+        `Failed to upload file to Telegram: ${error.message}`,
+        error.stack,
+      );
+      if (error.response?.data) {
+        this.logger.error(
+          `Telegram API response: ${JSON.stringify(error.response.data)}`,
+        );
+      }
       throw new BadRequestException("Failed to upload file to storage");
     }
   }
@@ -139,50 +153,217 @@ export class StorageService {
     files: Express.Multer.File[],
     options: UploadOptions = {},
   ): Promise<UploadResult[]> {
-    const results = await Promise.all(
-      files.map((file) => this.uploadFile(file, options)),
-    );
+    // Upload sequentially to avoid Telegram rate limits
+    const results: UploadResult[] = [];
+    for (const file of files) {
+      const result = await this.uploadFile(file, options);
+      results.push(result);
+      // Small delay between uploads to avoid rate limiting
+      if (files.length > 1) {
+        await this.delay(100);
+      }
+    }
     return results;
   }
 
   /**
-   * Delete a file from R2 Storage
+   * Delete a file from Telegram channel (delete the message)
    */
   async deleteFile(key: string): Promise<void> {
     try {
-      await this.s3Client.send(
-        new DeleteObjectCommand({
-          Bucket: this.bucketName,
-          Key: key,
-        }),
-      );
-      this.logger.log(`File deleted successfully: ${key}`);
+      const messageId = this.extractMessageIdFromKey(key);
+
+      if (messageId) {
+        await axios.post(`${this.baseUrl}/deleteMessage`, {
+          chat_id: this.channelId,
+          message_id: messageId,
+        });
+        this.logger.log(
+          `File message deleted from Telegram: message_id=${messageId}`,
+        );
+      } else {
+        this.logger.warn(
+          `Cannot delete file from Telegram: no message_id found for key=${key}`,
+        );
+      }
     } catch (error) {
-      this.logger.error(`Failed to delete file: ${error.message}`, error.stack);
-      throw new BadRequestException("Failed to delete file from storage");
+      this.logger.error(
+        `Failed to delete file from Telegram: ${error.message}`,
+        error.stack,
+      );
+      // Don't throw - deletion failure shouldn't break the flow
     }
   }
 
   /**
-   * Get file from R2 Storage
+   * Get file from Telegram as Buffer
    */
   async getFile(key: string): Promise<Buffer> {
     try {
-      const response = await this.s3Client.send(
-        new GetObjectCommand({
-          Bucket: this.bucketName,
-          Key: key,
-        }),
+      const fileId = this.extractFileId(key);
+
+      // Step 1: Get file path from Telegram
+      const fileInfoResponse = await axios.get(
+        `${this.baseUrl}/getFile?file_id=${fileId}`,
       );
 
-      const chunks: Uint8Array[] = [];
-      for await (const chunk of response.Body as AsyncIterable<Uint8Array>) {
-        chunks.push(chunk);
+      if (!fileInfoResponse.data.ok) {
+        throw new Error(
+          `Telegram getFile error: ${fileInfoResponse.data.description}`,
+        );
       }
-      return Buffer.concat(chunks);
+
+      const filePath = fileInfoResponse.data.result.file_path;
+
+      // Step 2: Download file from Telegram file server
+      const downloadUrl = `https://api.telegram.org/file/bot${this.botToken}/${filePath}`;
+      const fileResponse = await axios.get(downloadUrl, {
+        responseType: "arraybuffer",
+      });
+
+      return Buffer.from(fileResponse.data);
     } catch (error) {
-      this.logger.error(`Failed to get file: ${error.message}`, error.stack);
+      this.logger.error(
+        `Failed to get file from Telegram: ${error.message}`,
+        error.stack,
+      );
       throw new BadRequestException("Failed to get file from storage");
+    }
+  }
+
+  /**
+   * Generate a temporary download URL for a file via Telegram
+   * Telegram file URLs are valid for at least 1 hour
+   */
+  async getSignedUrl(
+    key: string,
+    _expiresIn: number = 3600,
+    _options?: { downloadFilename?: string },
+  ): Promise<string> {
+    try {
+      const fileId = this.extractFileId(key);
+
+      // Get file path from Telegram
+      const fileInfoResponse = await axios.get(
+        `${this.baseUrl}/getFile?file_id=${fileId}`,
+      );
+
+      if (!fileInfoResponse.data.ok) {
+        throw new Error(
+          `Telegram getFile error: ${fileInfoResponse.data.description}`,
+        );
+      }
+
+      const filePath = fileInfoResponse.data.result.file_path;
+      const downloadUrl = `https://api.telegram.org/file/bot${this.botToken}/${filePath}`;
+
+      this.logger.log(`Generated download URL for file_id: ${fileId}`);
+      return downloadUrl;
+    } catch (error) {
+      this.logger.error(
+        `Failed to generate download URL: ${error.message}`,
+        error.stack,
+      );
+      throw new BadRequestException("Failed to generate file access URL");
+    }
+  }
+
+  /**
+   * Get file metadata
+   */
+  async getFileMetadata(key: string): Promise<{
+    contentType: string;
+    contentLength: number;
+    lastModified?: Date;
+  }> {
+    try {
+      const fileId = this.extractFileId(key);
+
+      const fileInfoResponse = await axios.get(
+        `${this.baseUrl}/getFile?file_id=${fileId}`,
+      );
+
+      if (!fileInfoResponse.data.ok) {
+        throw new Error(
+          `Telegram getFile error: ${fileInfoResponse.data.description}`,
+        );
+      }
+
+      const fileInfo = fileInfoResponse.data.result;
+
+      return {
+        contentType: this.getMimeTypeFromPath(fileInfo.file_path || ""),
+        contentLength: fileInfo.file_size || 0,
+        lastModified: undefined,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to get file metadata: ${error.message}`,
+        error.stack,
+      );
+      throw new BadRequestException("File not found or inaccessible");
+    }
+  }
+
+  /**
+   * Check if a file exists in Telegram storage
+   */
+  async fileExists(key: string): Promise<boolean> {
+    try {
+      const fileId = this.extractFileId(key);
+      const response = await axios.get(
+        `${this.baseUrl}/getFile?file_id=${fileId}`,
+      );
+      return response.data.ok === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Get file as a readable stream
+   */
+  async getFileStream(key: string): Promise<{
+    stream: ReadableStream | null;
+    contentType: string;
+    contentLength: number;
+  }> {
+    try {
+      const fileId = this.extractFileId(key);
+
+      const fileInfoResponse = await axios.get(
+        `${this.baseUrl}/getFile?file_id=${fileId}`,
+      );
+
+      if (!fileInfoResponse.data.ok) {
+        throw new Error(
+          `Telegram getFile error: ${fileInfoResponse.data.description}`,
+        );
+      }
+
+      const fileInfo = fileInfoResponse.data.result;
+      const filePath = fileInfo.file_path;
+      const downloadUrl = `https://api.telegram.org/file/bot${this.botToken}/${filePath}`;
+
+      const response = await axios.get(downloadUrl, {
+        responseType: "arraybuffer",
+      });
+
+      const buffer = Buffer.from(response.data);
+      const blob = new Blob([buffer]);
+      const stream = blob.stream() as unknown as ReadableStream;
+
+      return {
+        stream,
+        contentType: this.getMimeTypeFromPath(filePath || ""),
+        contentLength: fileInfo.file_size || buffer.length,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to get file stream: ${error.message}`,
+        error.stack,
+      );
+      throw new BadRequestException("Failed to access file");
     }
   }
 
@@ -212,62 +393,8 @@ export class StorageService {
     }
   }
 
-  /**
-   * Get file extension from filename
-   */
-  private getFileExtension(filename: string): string {
-    const lastDotIndex = filename.lastIndexOf(".");
-    if (lastDotIndex === -1) return "";
-    return filename.substring(lastDotIndex).toLowerCase();
-  }
+  // ===== Path generation helpers (kept for caption/organization) =====
 
-  /**
-   * Get public URL for a file (used during upload)
-   */
-  private getPublicUrl(key: string): string {
-    // Remove bucket name from key if it's already included
-    const cleanKey = key.replace(new RegExp(`^${this.bucketName}/`), '');
-    
-    // If you have a custom domain or public URL configured
-    if (this.publicUrl) {
-      return `${this.publicUrl.replace(/\/$/, "")}/${cleanKey}`;
-    }
-    
-    // Default R2 URL format - this shouldn't happen if publicUrl is set
-    const endpoint = this.configService.get("CLOUDFLARE_R2_ENDPOINT");
-    return `${endpoint}/${this.bucketName}/${cleanKey}`;
-  }
-
-  /**
-   * Get public URL for a file key (publicly accessible method)
-   * Use this when you have R2 public bucket access configured
-   * @param key - The file key in R2 storage
-   */
-  getPublicFileUrl(key: string): string | null {
-    if (!this.publicUrl) {
-      return null;
-    }
-
-    // Clean the key
-    let cleanKey = key;
-    if (this.bucketName && cleanKey.startsWith(`${this.bucketName}/`)) {
-      cleanKey = cleanKey.substring(this.bucketName.length + 1);
-    }
-    cleanKey = cleanKey.replace(/^\//, "");
-
-    return `${this.publicUrl.replace(/\/$/, "")}/${cleanKey}`;
-  }
-
-  /**
-   * Check if public URL is configured
-   */
-  hasPublicUrl(): boolean {
-    return !!this.publicUrl;
-  }
-
-  /**
-   * Generate folder path for contract documents
-   */
   generateContractDocumentPath(
     contractId: string,
     documentRequirementId: string,
@@ -275,191 +402,98 @@ export class StorageService {
     return `contracts/${contractId}/documents/${documentRequirementId}`;
   }
 
-  /**
-   * Generate folder path for user documents (KYC, etc.)
-   */
   generateUserDocumentPath(userId: string, documentType: string): string {
     return `users/${userId}/${documentType}`;
   }
 
-  /**
-   * Generate folder path for withdrawal proofs
-   */
   generateWithdrawalProofPath(withdrawalId: string): string {
     return `withdrawals/${withdrawalId}/proofs`;
   }
 
-  /**
-   * Generate a presigned URL for secure file access
-   * This allows temporary access to private files without exposing credentials
-   * @param key - The file key in R2 storage
-   * @param expiresIn - URL expiration time in seconds (default: 1 hour, max: 7 days)
-   * @param options - Additional options like download filename
-   */
-  async getSignedUrl(
-    key: string,
-    expiresIn: number = 3600,
-    options?: { downloadFilename?: string },
-  ): Promise<string> {
-    try {
-      // Clean the key - remove bucket name prefix if present
-      let cleanKey = key;
-      if (this.bucketName && cleanKey.startsWith(`${this.bucketName}/`)) {
-        cleanKey = cleanKey.substring(this.bucketName.length + 1);
-      }
-      // Remove leading slash if present
-      cleanKey = cleanKey.replace(/^\//, "");
-
-      this.logger.debug(`Generating signed URL for key: ${cleanKey}`);
-
-      const command = new GetObjectCommand({
-        Bucket: this.bucketName,
-        Key: cleanKey,
-        ...(options?.downloadFilename && {
-          ResponseContentDisposition: `attachment; filename="${encodeURIComponent(options.downloadFilename)}"`,
-        }),
-      });
-
-      // Max expiration is 7 days (604800 seconds)
-      const maxExpiration = 7 * 24 * 60 * 60;
-      const validExpiration = Math.min(expiresIn, maxExpiration);
-
-      const signedUrl = await getSignedUrl(this.s3Client, command, {
-        expiresIn: validExpiration,
-      });
-
-      this.logger.log(`Generated signed URL for key: ${cleanKey}`);
-      return signedUrl;
-    } catch (error) {
-      this.logger.error(
-        `Failed to generate signed URL: ${error.message}`,
-        error.stack,
-      );
-      throw new BadRequestException("Failed to generate file access URL");
-    }
-  }
+  // ===== URL/Key extraction helpers =====
 
   /**
-   * Get file metadata (size, content type, etc.)
-   * @param key - The file key in R2 storage
-   */
-  async getFileMetadata(key: string): Promise<{
-    contentType: string;
-    contentLength: number;
-    lastModified?: Date;
-  }> {
-    try {
-      const cleanKey = key.replace(new RegExp(`^${this.bucketName}/`), "");
-
-      const response = await this.s3Client.send(
-        new HeadObjectCommand({
-          Bucket: this.bucketName,
-          Key: cleanKey,
-        }),
-      );
-
-      return {
-        contentType: response.ContentType || "application/octet-stream",
-        contentLength: response.ContentLength || 0,
-        lastModified: response.LastModified,
-      };
-    } catch (error) {
-      this.logger.error(
-        `Failed to get file metadata: ${error.message}`,
-        error.stack,
-      );
-      throw new BadRequestException("File not found or inaccessible");
-    }
-  }
-
-  /**
-   * Check if a file exists in storage
-   * @param key - The file key in R2 storage
-   */
-  async fileExists(key: string): Promise<boolean> {
-    try {
-      const cleanKey = key.replace(new RegExp(`^${this.bucketName}/`), "");
-      await this.s3Client.send(
-        new HeadObjectCommand({
-          Bucket: this.bucketName,
-          Key: cleanKey,
-        }),
-      );
-      return true;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  /**
-   * Get file as a readable stream (useful for proxying downloads)
-   * @param key - The file key in R2 storage
-   */
-  async getFileStream(key: string): Promise<{
-    stream: ReadableStream | null;
-    contentType: string;
-    contentLength: number;
-  }> {
-    try {
-      const cleanKey = key.replace(new RegExp(`^${this.bucketName}/`), "");
-
-      const response = await this.s3Client.send(
-        new GetObjectCommand({
-          Bucket: this.bucketName,
-          Key: cleanKey,
-        }),
-      );
-
-      return {
-        stream: response.Body?.transformToWebStream() || null,
-        contentType: response.ContentType || "application/octet-stream",
-        contentLength: response.ContentLength || 0,
-      };
-    } catch (error) {
-      this.logger.error(
-        `Failed to get file stream: ${error.message}`,
-        error.stack,
-      );
-      throw new BadRequestException("Failed to access file");
-    }
-  }
-
-  /**
-   * Extract storage key from file URL
-   * @param url - The full file URL stored in database
+   * Extract file_id from stored URL or key
+   * Supports formats:
+   *   - telegram://FILE_ID?message_id=123
+   *   - FILE_ID (raw)
+   *   - Legacy R2 URLs (will throw)
    */
   extractKeyFromUrl(url: string): string {
-    if (!url) {
-      throw new BadRequestException("Invalid file URL");
+    return this.extractFileId(url);
+  }
+
+  /**
+   * Get public URL for a file key
+   * For Telegram, there is no persistent public URL
+   */
+  getPublicFileUrl(_key: string): string | null {
+    return null;
+  }
+
+  /**
+   * Check if public URL is configured
+   */
+  hasPublicUrl(): boolean {
+    return false;
+  }
+
+  // ===== Private helpers =====
+
+  private extractFileId(urlOrKey: string): string {
+    if (!urlOrKey) {
+      throw new BadRequestException("Invalid file reference");
     }
 
-    try {
-      // If URL is already a key (no protocol)
-      if (!url.includes("://")) {
-        return url;
-      }
-
-      const urlObj = new URL(url);
-      // Remove leading slash from pathname
-      let key = urlObj.pathname.replace(/^\//, "");
-
-      // Handle R2 subdomain-style URLs (bucket.account.r2.cloudflarestorage.com)
-      // The hostname already contains bucket name, so pathname is the key
-      if (urlObj.hostname.includes(".r2.cloudflarestorage.com")) {
-        // Key is just the pathname without leading slash
-        return key;
-      }
-
-      // Handle path-style URLs (endpoint/bucket/key)
-      // Remove bucket name prefix if present
-      if (this.bucketName && key.startsWith(`${this.bucketName}/`)) {
-        key = key.substring(this.bucketName.length + 1);
-      }
-
-      return key;
-    } catch (error) {
-      this.logger.error(`Failed to extract key from URL: ${url}`);
-      throw new BadRequestException("Invalid file URL format");
+    // telegram://FILE_ID?message_id=123
+    if (urlOrKey.startsWith("telegram://")) {
+      const withoutScheme = urlOrKey.substring("telegram://".length);
+      const questionIdx = withoutScheme.indexOf("?");
+      return questionIdx > -1
+        ? withoutScheme.substring(0, questionIdx)
+        : withoutScheme;
     }
+
+    // Already a raw file_id (no protocol)
+    if (!urlOrKey.includes("://")) {
+      return urlOrKey;
+    }
+
+    // Legacy R2 URL
+    this.logger.warn(
+      `Encountered non-Telegram URL: ${urlOrKey}. File may be from old R2 storage.`,
+    );
+    throw new BadRequestException(
+      "This file was stored in the old storage system and is no longer accessible. Please re-upload.",
+    );
+  }
+
+  private extractMessageIdFromKey(urlOrKey: string): number | null {
+    if (urlOrKey.startsWith("telegram://")) {
+      const match = urlOrKey.match(/message_id=(\d+)/);
+      return match ? parseInt(match[1], 10) : null;
+    }
+    return null;
+  }
+
+  private getMimeTypeFromPath(filePath: string): string {
+    const ext = filePath.split(".").pop()?.toLowerCase();
+    const mimeMap: Record<string, string> = {
+      pdf: "application/pdf",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      png: "image/png",
+      gif: "image/gif",
+      webp: "image/webp",
+      doc: "application/msword",
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      xls: "application/vnd.ms-excel",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    };
+    return mimeMap[ext || ""] || "application/octet-stream";
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

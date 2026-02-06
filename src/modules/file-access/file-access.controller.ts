@@ -202,21 +202,44 @@ export class FileAccessController {
 }
 
 /**
- * Public file access controller for files that don't require authentication
- * Only use this for truly public files
+ * Public file access controller — proxy endpoint for signed tokens
+ * No JWT required; the HMAC-signed token IS the authorization
  */
 @ApiTags("File Access")
-@Controller("public/files")
+@Controller("files")
 export class PublicFileAccessController {
   constructor(private readonly fileAccessService: FileAccessService) {}
 
   /**
-   * This endpoint can be used for public file access if needed
-   * For now, it's disabled - all files require authentication
+   * Proxy endpoint: streams file from Telegram through the backend
+   * URL is returned by getDocumentFileUrl as /api/files/proxy/{token}
+   * Token is HMAC-signed and contains fileId + expiration
    */
-  // @Get(':token')
-  // @ApiOperation({ summary: 'Access file via temporary token' })
-  // async accessFileByToken(@Param('token') token: string) {
-  //   return this.fileAccessService.accessFileByToken(token);
-  // }
+  @Get("proxy/:token")
+  @ApiOperation({
+    summary: "Access file via signed proxy token",
+    description:
+      "Streams a file through the server using a short-lived signed token. No JWT auth required.",
+  })
+  @ApiParam({ name: "token", description: "HMAC-signed proxy token" })
+  @ApiResponse({ status: 200, description: "File stream" })
+  @ApiResponse({ status: 400, description: "Invalid token" })
+  @ApiResponse({ status: 403, description: "Token expired or invalid" })
+  @ApiResponse({ status: 404, description: "File not found" })
+  async proxyFile(
+    @Param("token") token: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { stream, contentType, contentLength, fileName, disposition } =
+      await this.fileAccessService.streamFileByProxyToken(token);
+
+    res.set({
+      "Content-Type": contentType,
+      "Content-Length": contentLength,
+      "Content-Disposition": `${disposition || 'inline'}; filename="${encodeURIComponent(fileName)}"`,
+      "Cache-Control": "private, max-age=3600",
+    });
+
+    return new StreamableFile(stream);
+  }
 }
